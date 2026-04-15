@@ -457,7 +457,7 @@ def linalg_to_bin_enable_npu_compile_910_95(linalg: str, metadata, opt):
         hfusion_enable_multiple_consumer_fusion = metadata["hfusion_enable_multiple_consumer_fusion"]
         if hfusion_enable_multiple_consumer_fusion:
             cmd_list += [f"--hfusion-enable-multiple-consumer-fusion={hfusion_enable_multiple_consumer_fusion}"]
-        
+
         if opt.debug:
             print(f"[DEBUG] cmd_list: {' '.join(cmd_list)}")
 
@@ -774,7 +774,7 @@ class NPUOptions:
     enable_bishengir_simt_optimization: int = 000
     # compile_mode: "simd" (default), "unstructured_in_simt", "simt_only"
     # When compile_mode is provided, it automatically sets other fields
-    compile_mode: str = "simd"
+    compile_mode: str = "unstructured_in_simt"
     mix_mode: str = ""
     simt_stack_limit: int = None
     # take effect on the reorder instruction pattern for SIMT. The pattern is disabled by default.

@@ -121,7 +121,7 @@ jobs:
         tar czf "${{ env.llvm_install_dir }}.tar.gz" "${{ env.llvm_install_dir }}"
 
     - name: Upload Build Artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: llvm-${{ matrix.config.target-os }}-${{ matrix.config.arch }}
         path: |

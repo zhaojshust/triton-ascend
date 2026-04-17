@@ -40,6 +40,7 @@ from triton.runtime.autotuner import Autotuner, Config
 from .autoparser import (LowDimsAxesParser, PtrNumsParser, ReductionAxesParser,
                          SplitAxesParser, TilingAxesParser)
 from .utils import get_byte_per_numel, is_valid_axis_name, valid_axis_names
+from .ubtuner import UBTuner, get_origin_fn
 
 _RESERVED_HINT_KEYS = {
     "split_params",
@@ -294,10 +295,19 @@ class AutoTilingTuner(Autotuner):
         self.user_specified_num_stages = None
         self.user_specified_multibuffer = None
         self.print_autotuning = os.getenv("TRITON_PRINT_AUTOTUNING", None) == "1"
-        # Compile kernels in parallel by default for triton.runtime.JITFunction,
+
+        # Mark the original function so ubtuner can detect autotune was applied
+        ori_fn = get_origin_fn(fn)
+        setattr(ori_fn, '_triton_autotuned', True)
+ 
+        self.enable_ubtuner = os.getenv("TRITON_ENABLE_UBTUNER", "").lower() in ('compile', 'run') or getattr(ori_fn, '_ubtuned', False)
+        if self.enable_ubtuner:
+            self.ubtuner = UBTuner(fn, key)
+        
+        # Compile kernels in parallel by default for triton.runtime.JITFunction or UBTuner,
         # but not for others, e.g., LibEntry, since it's not compatible with AsyncCompileMode
         self.compile_parallel = (
-            isinstance(self.fn, triton.runtime.JITFunction)
+            isinstance(self.fn, (triton.runtime.JITFunction, UBTuner))
             and os.getenv("TRITON_AUTOTUNE_PARALLEL_COMPILE", "1") == "1"
         )
 
@@ -597,7 +607,7 @@ class AutoTilingTuner(Autotuner):
         if key not in self.cache:
             # prune configs
             pruned_configs = self.prune_configs(kwargs)
-            if len(pruned_configs) > 1:
+            if self.enable_ubtuner or len(pruned_configs) > 1:
                 used_cached_result = False
                 bench_start = time.time()
                 timings = self._batch_bench(*args, configs=pruned_configs, **kwargs)
@@ -622,16 +632,37 @@ class AutoTilingTuner(Autotuner):
 
         if not used_cached_result and self.auto_profile_dir is not None:
             self._profile(*args, config=self.best_config, **kwargs)
+        ub_cfg = dict(getattr(config, "ubtune_cfg", {}))
         if config.pre_hook is not None:
             full_nargs = {**self.nargs, **kwargs, **config.all_kwargs()}
+            full_nargs.update(ub_cfg)
             config.pre_hook(full_nargs)
         final_kwargs = dict(config.all_kwargs(), **kwargs)
+        final_kwargs.update(ub_cfg)
         ret = self.fn.run(
             *args,
             **final_kwargs,
         )
         self.nargs = None
         return ret
+    
+    def _try_ubtuner(self, *args, config, excp, run_fns, **kwargs):
+        if not (self.enable_ubtuner and "ub overflow" in str(excp).lower()):
+            return
+ 
+        try:
+            # 从当前 config 中提取编译选项并传递给 ubtuner
+            compile_opts = config.all_kwargs()
+            ub_cfg = self.ubtuner.get_best_config(*args, compile_opts=compile_opts, **kwargs)
+            if self.print_autotuning:
+                print(f"ub_cfg {ub_cfg}")
+            if ub_cfg:
+                setattr(config, 'ubtune_cfg', ub_cfg)
+                ub_fn = self._make_kernel_call(*args, config=config, **kwargs)
+                run_fns[config] = functools.partial(ub_fn, warmup=False)
+        except Exception as e:
+            if self.print_autotuning:
+                print(f"[WARN] encounter exception when try ubtune, Details: {e}")
 
     def _batch_bench(self, *args, configs, **kwargs):
         from triton.compiler.errors import CompileTimeAssertionFailure, MLIRCompilationError
@@ -664,6 +695,7 @@ class AutoTilingTuner(Autotuner):
                             import traceback
                             exc_stack = traceback.format_exc()
                             exc = e
+                            self._try_ubtuner(*args, config=config, excp=e, run_fns=run_fns, **kwargs)
             except Exception as e:
                 # ignore exception from __exit__() of AsyncCompileMode
                 triton.runtime._async_compile.active_mode.set(None)
@@ -676,6 +708,7 @@ class AutoTilingTuner(Autotuner):
                     import traceback
                     exc_stack = traceback.format_exc()
                     exc = e
+                    self._try_ubtuner(*args, config=config, excp=e, run_fns=run_fns, **kwargs)
 
         if len(run_fns) == 0:
             raise RuntimeError(f"No valid triton configs. {type(exc).__name__}: {exc} \nStack trace: {exc_stack}")
@@ -705,6 +738,9 @@ class AutoTilingTuner(Autotuner):
                              " Make sure that you don't re-define auto-tuned symbols.")
         # augment meta-parameters with tunable ones
         current = dict(meta, **config.all_kwargs())
+        ub_cfg = dict(getattr(config, "ubtune_cfg", {}))
+        if ub_cfg:
+            current.update(ub_cfg)
         full_nargs = {**self.nargs, **current}
 
         def kernel_call(warmup):

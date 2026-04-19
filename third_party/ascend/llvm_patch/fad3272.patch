@@ -8,7 +8,7 @@ index ef9ccb7e8794..83d85f173802 100644
    let hasVerifier = 1;
 +  let useCustomPropertiesEncoding = 1;
  }
- 
+
  //===----------------------------------------------------------------------===//
 diff --git a/mlir/include/mlir/Dialect/ControlFlow/IR/ControlFlowOps.td b/mlir/include/mlir/Dialect/ControlFlow/IR/ControlFlowOps.td
 index a441fd82546e..b7569ef0fbc7 100644
@@ -20,7 +20,7 @@ index a441fd82546e..b7569ef0fbc7 100644
    }];
 +  let useCustomPropertiesEncoding = 1;
  }
- 
+
  //===----------------------------------------------------------------------===//
 diff --git a/mlir/include/mlir/Dialect/Func/IR/FuncOps.td b/mlir/include/mlir/Dialect/Func/IR/FuncOps.td
 index 06ce4f16c867..905efc7e4d30 100644
@@ -33,7 +33,7 @@ index 06ce4f16c867..905efc7e4d30 100644
 +
 +  let useCustomPropertiesEncoding = 1;
  }
- 
+
  //===----------------------------------------------------------------------===//
 @@ -357,6 +359,7 @@ def FuncOp : Func_Op<"func", [
      bool isDeclaration() { return isExternal(); }
@@ -41,7 +41,7 @@ index 06ce4f16c867..905efc7e4d30 100644
    let hasCustomAssemblyFormat = 1;
 +  let useCustomPropertiesEncoding = 1;
  }
- 
+
  //===----------------------------------------------------------------------===//
 diff --git a/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td b/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td
 index 5e2461b4508e..d3c398ab12c9 100644
@@ -61,27 +61,27 @@ index f3674c3eecfe..312ef5d211af 100644
 --- a/mlir/include/mlir/Dialect/Linalg/IR/LinalgStructuredOps.td
 +++ b/mlir/include/mlir/Dialect/Linalg/IR/LinalgStructuredOps.td
 @@ -775,6 +775,7 @@ def MatmulOp : LinalgStructuredBase_Op<"matmul", [
- 
+
      ];
      let hasCustomAssemblyFormat = 1;
 +    let useCustomPropertiesEncoding = 1;
      let hasFolder = 1;
      let hasVerifier = 1;
- 
+
 @@ -1045,6 +1046,7 @@ def BatchMatmulOp : LinalgStructuredBase_Op<"batch_matmul", !listconcat([AttrSiz
-       
+
      ];
      let hasCustomAssemblyFormat = 1;
 +    let useCustomPropertiesEncoding = 1;
      let hasFolder = 1;
      let hasVerifier = 1;
- 
+
 diff --git a/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td b/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td
 index 88df54174da2..01c8ea9b61c0 100644
 --- a/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td
 +++ b/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td
 @@ -309,6 +309,7 @@ def ForOp : SCF_Op<"for",
- 
+
    let hasCanonicalizer = 1;
    let hasCustomAssemblyFormat = 1;
 +  let useCustomPropertiesEncoding = 1;
@@ -106,7 +106,7 @@ index 7d4d818ee448..3fdc036abf14 100644
 +void TruncIOp::writeProperties(::mlir::DialectBytecodeWriter &writer) {
 +  return;
 +}
- 
+
  OpFoldResult arith::TruncIOp::fold(FoldAdaptor adaptor) {
    if (matchPattern(getOperand(), m_Op<arith::ExtUIOp>()) ||
 diff --git a/mlir/lib/Dialect/Bufferization/IR/BufferizationDialect.cpp b/mlir/lib/Dialect/Bufferization/IR/BufferizationDialect.cpp
@@ -126,7 +126,7 @@ index 6c08cdfb669f..f4442c9d0cd6 100644
 +  BufferizationBytecodeInterface(Dialect *dialect) : BytecodeDialectInterface(dialect) {}
 +
 +  void writeVersion(DialectBytecodeWriter &writer) const override {
-+    writer.writeVarInt(351); 
++    writer.writeVarInt(351);
 +    return;
 +  }
 +
@@ -136,7 +136,7 @@ index 6c08cdfb669f..f4442c9d0cd6 100644
 +    return std::make_unique<BufferizationDialectVersion>(version);
 +  }
 +};
- 
+
  void mlir::bufferization::BufferizationDialect::initialize() {
    addOperations<
 @@ -119,6 +138,7 @@ void mlir::bufferization::BufferizationDialect::initialize() {
@@ -145,7 +145,7 @@ index 6c08cdfb669f..f4442c9d0cd6 100644
        BuiltinMemRefExternalModel<UnrankedMemRefType>>(*getContext());
 +   addInterfaces<BufferizationBytecodeInterface>();
  }
- 
+
  LogicalResult BufferizationDialect::verifyRegionArgAttribute(
 diff --git a/mlir/lib/Dialect/ControlFlow/IR/ControlFlowOps.cpp b/mlir/lib/Dialect/ControlFlow/IR/ControlFlowOps.cpp
 index 582593adfa5c..48e0cf29bc60 100644
@@ -154,7 +154,7 @@ index 582593adfa5c..48e0cf29bc60 100644
 @@ -458,6 +458,57 @@ Block *CondBranchOp::getSuccessorForOperands(ArrayRef<Attribute> operands) {
    return nullptr;
  }
- 
+
 +::llvm::LogicalResult CondBranchOp::readProperties(::mlir::DialectBytecodeReader &reader, ::mlir::OperationState &state) {
 +  auto &prop = state.getOrAddProperties<Properties>(); (void)prop;
 +  if (::mlir::failed(reader.readOptionalAttribute(prop.branch_weights)))
@@ -216,7 +216,7 @@ index 3c09a2124bd7..3b41d9a18efb 100644
 @@ -33,6 +33,26 @@ using namespace mlir::func;
  // FuncDialect
  //===----------------------------------------------------------------------===//
- 
+
 +struct FuncDialectVersion : public DialectVersion {
 +  FuncDialectVersion(uint64_t version) : version(version) {}
 +  uint64_t version;
@@ -226,7 +226,7 @@ index 3c09a2124bd7..3b41d9a18efb 100644
 +  FuncBytecodeInterface(Dialect *dialect) : BytecodeDialectInterface(dialect) {}
 +
 +  void writeVersion(DialectBytecodeWriter &writer) const override {
-+    writer.writeVarInt(351); 
++    writer.writeVarInt(351);
 +    return;
 +  }
 +
@@ -246,13 +246,13 @@ index 3c09a2124bd7..3b41d9a18efb 100644
                              FuncOp, ReturnOp>();
 +  addInterfaces<FuncBytecodeInterface>();
  }
- 
+
  /// Materialize a single constant operation from a given attribute value with
 @@ -279,6 +300,89 @@ FuncOp FuncOp::clone() {
    return clone(mapper);
  }
- 
-+::llvm::LogicalResult FuncOp::readProperties(DialectBytecodeReader &reader, 
+
++::llvm::LogicalResult FuncOp::readProperties(DialectBytecodeReader &reader,
 +                                                        OperationState &state) {
 +  auto &prop = state.getOrAddProperties<Properties>(); (void)prop;
 +
@@ -267,7 +267,7 @@ index 3c09a2124bd7..3b41d9a18efb 100644
 +  // --- 关键修改：版本感知的 no_inline 读取 ---
 +  // 1. 移除 auto 后面的星号，因为返回的是 FailureOr 包装类
 +  auto versionOr = reader.getDialectVersion<FuncDialect>();
-+  
++
 +  uint64_t version = 0;
 +  // 2. 检查是否读取成功，并且返回的指针不为空
 +  if (succeeded(versionOr) && *versionOr) {
@@ -281,7 +281,7 @@ index 3c09a2124bd7..3b41d9a18efb 100644
 +      return failure();
 +  } else {
 +    // 旧版文件没有这个属性，设为默认值（false），不移动指针
-+    prop.no_inline = nullptr; 
++    prop.no_inline = nullptr;
 +  }
 +
 +  // 3. res_attrs (字母 r)
@@ -323,7 +323,7 @@ index 3c09a2124bd7..3b41d9a18efb 100644
 +
 +  if (failed(reader.readOptionalAttribute(prop.res_attrs)))
 +    return failure();
-+  
++
 +  return success();
 +}
 +
@@ -343,9 +343,9 @@ index a6e89f63c822..21e863025215 100644
 --- a/mlir/lib/Dialect/LLVMIR/IR/LLVMDialect.cpp
 +++ b/mlir/lib/Dialect/LLVMIR/IR/LLVMDialect.cpp
 @@ -4114,6 +4114,14 @@ void LLVM::AssumeOp::build(OpBuilder &builder, OperationState &state,
- 
+
  LogicalResult LLVM::AssumeOp::verify() { return verifyOperandBundles(*this); }
- 
+
 +::llvm::LogicalResult AssumeOp::readProperties(::mlir::DialectBytecodeReader &reader, ::mlir::OperationState &state) {
 +  return ::mlir::success();
 +}
@@ -364,7 +364,7 @@ index e0e371617729..da3ab7590e54 100644
 @@ -203,6 +203,110 @@ static void buildMatmulOp(OpBuilder &b, OperationState &state,
                             attributes, regionBuilder);
  }
- 
+
 +::llvm::LogicalResult MatmulOp::readProperties(::mlir::DialectBytecodeReader &reader, ::mlir::OperationState &state) {
 +  auto &prop = state.getOrAddProperties<Properties>(); (void)prop;
 +  if (::mlir::failed(reader.readOptionalAttribute(prop.cast)))
@@ -393,7 +393,7 @@ index e0e371617729..da3ab7590e54 100644
 +;
 +      return ::mlir::success();
 +    };
-+    if (::mlir::failed(readProp())) 
++    if (::mlir::failed(readProp()))
 +      return ::mlir::failure();
 +  }
 +  return ::mlir::success();
@@ -492,6 +492,6 @@ index 0dbc041d231a..9d1960a65a74 100644
 +
 +  // writer.writeOptionalAttribute(prop.unsignedCmp);
 +}
- 
+
  void ForOp::build(OpBuilder &builder, OperationState &result, Value lb,
                    Value ub, Value step, ValueRange initArgs,

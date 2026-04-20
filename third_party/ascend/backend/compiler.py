@@ -39,6 +39,7 @@ from triton.backends.ascend.utils import (
     _enable_unpublished_feature,
     _enable_print_ub_bits,
     _enable_dump_memory_info,
+    _enable_msdebug,
     _get_kernel_target,
     _get_llvm_path,
     _get_mlir_path,
@@ -630,6 +631,10 @@ def linalg_to_bin_enable_npu_compile_A2_A3(linalg: str, metadata, opt):
 
         if _enable_dump_memory_info():
             _compile_option_list += ["--enable-memory-display=true"]
+
+        if _enable_msdebug():
+            _compile_option_list += ["--enable-ms-debug=true"]
+
 
         enable_hivm_auto_cv_balance = metadata["enable_hivm_auto_cv_balance"]
         if enable_hivm_auto_cv_balance is not None:

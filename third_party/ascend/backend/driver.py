@@ -320,7 +320,7 @@ def extract_device_print_code_from_cann():
 
         # remove [aicore] functions
         aicore_positions = []
-        for m in re.finditer('\[aicore\]', code):
+        for m in re.finditer(r'\[aicore\]', code):
             aicore_positions.append(m.start())
 
         def find_aicore_function_span(src, pos):

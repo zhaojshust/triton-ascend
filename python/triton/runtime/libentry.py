@@ -39,11 +39,9 @@ from typing import (
 
 import triton
 import torch
-
-torch_device_fn = torch.npu
-
 from .code_cache import config_cache_dir
 
+torch_device_fn = torch.npu
 DEVICE_COUNT = torch_device_fn.device_count()
 version = triton.__version__.split(".")
 major_version, minor_version = eval(version[0]), eval(version[1])

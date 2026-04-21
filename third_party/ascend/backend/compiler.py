@@ -162,6 +162,8 @@ def ttir_to_linalg(mod, metadata, opt, *, named_ops=False):
             enable_select_analysis,
             compile_on_910_95
         )
+        if metadata["enable_dynamic_cv_pipeline"]:
+            ascend.passes.ttir.add_dynamic_cv_pipeline(pm, compile_on_910_95)
         pm.run(mod)
 
         if opt.debug:
@@ -845,7 +847,9 @@ class NPUOptions:
     disable_auto_inject_block_sync: bool = None
     enable_mixed_cv: bool = None
     enable_vf_fusion: bool = False
+    # todo: this code will be removed in version 530.
     add_auto_scheduling: bool = False
+    enable_dynamic_cv_pipeline: bool = False
     hfusion_enable_multiple_consumer_fusion: bool = False
 
     stream: int = None

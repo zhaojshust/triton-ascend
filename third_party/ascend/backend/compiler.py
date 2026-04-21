@@ -443,7 +443,7 @@ def linalg_to_bin_enable_npu_compile_910_95(linalg: str, metadata, opt):
             _compile_option_list += ["--disable-hfusion-vectorize=true"]
 
         if opt.debug:
-            _compile_option_list += ["--bishengir-print-ir-after=hivm-inject-sync"]
+            _compile_option_list += ["--bishengir-print-ir-after=hivm-graph-sync-solver"]
 
         cmd_list = (
             [npu_compiler_path, ttadapter_path]
@@ -457,7 +457,7 @@ def linalg_to_bin_enable_npu_compile_910_95(linalg: str, metadata, opt):
         hfusion_enable_multiple_consumer_fusion = metadata["hfusion_enable_multiple_consumer_fusion"]
         if hfusion_enable_multiple_consumer_fusion:
             cmd_list += [f"--hfusion-enable-multiple-consumer-fusion={hfusion_enable_multiple_consumer_fusion}"]
-        
+
         if opt.debug:
             print(f"[DEBUG] cmd_list: {' '.join(cmd_list)}")
 
@@ -644,7 +644,7 @@ def linalg_to_bin_enable_npu_compile_A2_A3(linalg: str, metadata, opt):
             ]
 
         if opt.debug:
-            _compile_option_list += ["--bishengir-print-ir-after=hivm-inject-sync"]
+            _compile_option_list += ["--bishengir-print-ir-after=hivm-graph-sync-solver"]
         cmd_list = (
             [npu_compiler_path, ttadapter_path]
             + _compile_option_list

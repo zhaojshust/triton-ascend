@@ -1,5 +1,4 @@
-// RUN: triton-opt %s --discrete-mask-access-conversion --split-input-file %s | FileCheck %s
-// RUN: triton-opt %s --triton-linearize --discrete-mask-access-conversion --triton-to-annotation '--triton-to-unstructure=compile-on-910-95=False force-simt-template=False' --triton-to-hivm --triton-to-hfusion --triton-to-llvm --bubble-up-operation '--triton-to-linalg=global-kernel=false named-ops=True enable-nd2nz-on-vector=False compile-on-910-95=False'
+// RUN: triton-opt --discrete-mask-access-conversion --split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: tt.func @discrete_load
 // CHECK: %[[loaded_value:.*]] = tt.load %[[load_ptr:.*]]

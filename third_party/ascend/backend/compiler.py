@@ -24,6 +24,7 @@ import hashlib
 import glob
 import os
 import re
+import shlex
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -46,6 +47,7 @@ from triton.backends.ascend.utils import (
     _get_npucompiler_path,
     _get_triton_adapter_opt_path,
     _get_triton_mlir_opt_path,
+    _get_triton_opt_path,
     _get_bishengir_opt_path,
     _is_ascend_sanitizer_enabled,
     _is_debug_line_info_disabled,
@@ -165,6 +167,15 @@ def ttir_to_linalg(mod, metadata, opt, *, named_ops=False):
         )
         if metadata["enable_dynamic_cv_pipeline"]:
             ascend.passes.ttir.add_dynamic_cv_pipeline(pm, compile_on_910_95)
+
+        if opt.debug:
+            # Print the equivalent triton-opt command line so the pass
+            # pipeline can be reproduced and debugged outside of Python.
+            cmd = [_get_triton_opt_path(), src_path,
+                   f"--pass-pipeline={pm.get_pipeline_str()}",
+                   "--mlir-print-debuginfo", "-o", dst_path]
+            print(f"[DEBUG] cmd list: {shlex.join(cmd)}")
+
         pm.run(mod)
 
         if opt.debug:

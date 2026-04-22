@@ -132,6 +132,29 @@ rename-wheel:
 	fi
 	mkdir -p dist; \
 	cp python/dist/*.whl dist/;
+	
+.PHONY: rename-wheel-with-npu_type
+rename-wheel-with-npu_type:
+	@set -e; \
+	echo "[rename-wheel-with-npu] NPU_TYPE=$$NPU_TYPE"; \
+	WHEEL=$$(ls python/dist/*.whl 2>/dev/null | head -n1); \
+	if [ -z "$$WHEEL" ]; then echo "No wheel found in python/dist/"; exit 1; fi; \
+	if [ -n "$$NPU_TYPE" ]; then \
+		NPU_TYPE=$$(printf "%s" "$$NPU_TYPE" | cut -c1-8); \
+	else \
+		NPU_TYPE=""; \
+	fi; \
+	echo "[rename-wheel] NPU_TYPE=$$NPU_TYPE"; \
+	BASENAME=$$(basename "$$WHEEL"); \
+	NEWBASENAME=$$(echo "$$BASENAME" | sed -E "s/\\+git[0-9a-fA-F]+/+$${NPU_TYPE}/"); \
+	if [ "$$BASENAME" != "$$NEWBASENAME" ]; then \
+		echo "Renaming $$BASENAME -> $$NEWBASENAME"; \
+		mv "python/dist/$$BASENAME" "python/dist/$$NEWBASENAME"; \
+	else \
+		echo "Wheel name unchanged: $$BASENAME"; \
+	fi
+	mkdir -p dist; \
+	cp python/dist/*.whl dist/;
 
 .PHONY: package
 package: $(TRITON_WHL) rename-wheel ## Build the Triton wheel package

@@ -154,7 +154,10 @@ def _get_llvm_path(path: str, *paths) -> str:
 def _get_npucompiler_path() -> str:
     ascend_dir = os.path.dirname(os.path.abspath(__file__))
     env = os.environ.copy()
-    npu_compiler_path = os.path.join(ascend_dir, "bishengir", "bin", "bishengir-compile")
+    if is_compile_on_910_95:
+        npu_compiler_path = os.path.join(ascend_dir, "bishengir-a5", "bin", "bishengir-compile")
+    else:
+        npu_compiler_path = os.path.join(ascend_dir, "bishengir", "bin", "bishengir-compile")
     if os.path.exists(npu_compiler_path):
         npuir_env_path = os.path.dirname(npu_compiler_path)
         env["PATH"] = npuir_env_path + ":" + env["PATH"]

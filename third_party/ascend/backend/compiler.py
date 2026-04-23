@@ -543,7 +543,7 @@ def linalg_to_bin_enable_npu_compile_910_95(linalg: str, metadata, opt):
             _compile_option_list += ["--disable-hfusion-vectorize=true"]
 
         if opt.debug:
-            _compile_option_list += ["--bishengir-print-ir-after=hivm-inject-sync"]
+            _compile_option_list += ["--bishengir-print-ir-after=hivm-graph-sync-solver"]
 
         cmd_list = (
             [npu_compiler_path, ttadapter_path]
@@ -754,7 +754,7 @@ def linalg_to_bin_enable_npu_compile_A2_A3(linalg: str, metadata, opt):
             ]
 
         if opt.debug:
-            _compile_option_list += ["--bishengir-print-ir-after=hivm-inject-sync"]
+            _compile_option_list += ["--bishengir-print-ir-after=hivm-graph-sync-solver"]
         cmd_list = (
             [npu_compiler_path, ttadapter_path]
             + _compile_option_list

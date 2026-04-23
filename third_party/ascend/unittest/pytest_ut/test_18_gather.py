@@ -24,6 +24,7 @@ Gather
 This is an example only for npu.
 """
 
+import pytest
 import torch
 import torch_npu
 import triton
@@ -118,28 +119,16 @@ def triton_gather(embeddings: torch.Tensor, indices: torch.Tensor, default_value
     return output
 
 
-if __name__ == "__main__":
-    for n_rows in (500, 1000):
-        for n_cols in (16, 17, 31, 32, 63, 64, 128, 256, 819, 512, 1024, 8192, 1001, 2003, 17000):
-            for index_num in (19, 123, 4321, 54321, 100, 200, 819, 500, 700, 1000):
-                print(n_rows, n_cols, index_num, flush=True)
+# ==================== Pytest Test ====================
+@pytest.mark.parametrize("n_rows", [500, 1000])
+@pytest.mark.parametrize("n_cols", [16, 17, 31, 32, 63, 64, 128, 256, 819, 512, 1024, 8192, 1001, 2003, 17000])
+@pytest.mark.parametrize("index_num", [19, 123, 4321, 54321, 100, 200, 819, 500, 700, 1000])
+def test_gather(n_rows, n_cols, index_num):
+    indices = torch.randint(0, n_rows, (index_num, ), dtype=torch.int32).npu()
+    embeddings = torch.randn(n_rows, n_cols, dtype=torch.float).npu()
 
-                indices = torch.randint(0, n_rows, (index_num, ), dtype=torch.int32).npu()
-                embeddings = torch.randn(n_rows, n_cols, dtype=torch.float).npu()
+    expect = torch_gather(embeddings, indices).cpu()
+    actual = triton_gather(embeddings, indices).cpu()
+    torch.npu.synchronize()
 
-                expect = torch_gather(embeddings, indices).cpu()
-                actual = triton_gather(embeddings, indices).cpu()
-                torch.npu.synchronize()
-                mask = ~(expect == actual)
-
-                error_count = mask.sum().item()
-                total_count = mask.numel()
-                print("error rate:", error_count / total_count, flush=True)
-
-                print("error detail:")
-                print("===========", flush=True)
-                print(expect[mask], flush=True)
-                print("===========", flush=True)
-                print(actual[mask], flush=True)
-                print("===========", flush=True)
-                print(flush=True)
+    torch.testing.assert_close(actual, expect)

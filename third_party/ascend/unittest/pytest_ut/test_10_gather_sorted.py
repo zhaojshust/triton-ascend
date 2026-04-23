@@ -24,6 +24,7 @@ Gather sorted
 This is an example only for npu.
 """
 
+import pytest
 import torch
 import torch_npu
 import triton
@@ -66,7 +67,7 @@ def gather_sorted_kernel(embeddings_ptr, sorted_indices_ptr, aux_indices_ptr, re
     remain_row_block_size = row_block_size - row_block_size_0
     row_block_size_1 = tl.cdiv(remain_row_block_size, 2)
     row_block_size_2 = remain_row_block_size - row_block_size_1
-    
+
     row_start_idx_0 = row_start_idx
     row_start_idx_1 = row_start_idx + row_block_size_0
     row_start_idx_2 = row_start_idx + row_block_size_0 + row_block_size_1
@@ -179,28 +180,16 @@ def generate_inputs(index_shape, table_shape, dtype):
     return table, sorted_indices, aux_indices
 
 
-if __name__ == "__main__":
-    for table_rows in (500, 1000):
-        for table_cols in (16, 17, 31, 32, 63, 64, 128, 256, 819, 512, 1024, 8192, 1001, 2003, 17000):
-            for index_num in (19, 123, 4321, 54321, 100, 200, 819, 500, 700, 1000):
-                print(table_rows, table_cols, index_num, flush=True)
+# ==================== Pytest Test ====================
+@pytest.mark.parametrize("table_rows", [500, 1000])
+@pytest.mark.parametrize("table_cols", [16, 17, 31, 32, 63, 64, 128, 256, 819, 512, 1024, 8192, 1001, 2003, 17000])
+@pytest.mark.parametrize("index_num", [19, 123, 4321, 54321, 100, 200, 819, 500, 700, 1000])
+def test_gather_sorted(table_rows, table_cols, index_num):
+    table, sorted_indices, aux_indices = generate_inputs((index_num,), (table_rows, table_cols), torch.float)
 
-                table, sorted_indices, aux_indices = generate_inputs((index_num,), (table_rows, table_cols), torch.float)
+    expect = torch_gather_sorted(table, sorted_indices, aux_indices).cpu()
+    torch.npu.synchronize()
+    actual = triton_gather_sorted(table, sorted_indices, aux_indices).cpu()
+    torch.npu.synchronize()
 
-                expect = torch_gather_sorted(table, sorted_indices, aux_indices).cpu()
-                torch.npu.synchronize()
-                actual = triton_gather_sorted(table, sorted_indices, aux_indices).cpu()
-                torch.npu.synchronize()
-                mask = ~(expect == actual)
-
-                error_count = mask.sum().item()
-                total_count = mask.numel()
-                print("error rate:", error_count / total_count, flush=True)
-
-                print("error detail:")
-                print("===========", flush=True)
-                print(expect[mask], flush=True)
-                print("===========", flush=True)
-                print(actual[mask], flush=True)
-                print("===========", flush=True)
-                print(flush=True)
+    torch.testing.assert_close(actual, expect)

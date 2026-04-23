@@ -18,12 +18,14 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+import pytest
 import torch
+import torch_npu
 import triton
 import triton.language as tl
 
 
-def test_add(x0, x1):
+def run_add(x0, x1):
     """
     测试 Triton 实现的向量加法与 PyTorch 的结果，精度比对是否一致。
 
@@ -41,10 +43,10 @@ def test_add(x0, x1):
     # 2. 定义 Triton kernel（在 NPU/GPU 上执行）
     @triton.jit
     def triton_kernel_add(
-            out_ptr0,  # 输出指针：结果存储位置
-            in_ptr0,  # 输入指针0：x0 的起始地址
-            in_ptr1,  # 输入指针1：x1 的起始地址
-            XS: tl.constexpr  # constexpr 参数：向量长度，在编译时确定
+        out_ptr0,  # 输出指针：结果存储位置
+        in_ptr0,  # 输入指针0：x0 的起始地址
+        in_ptr1,  # 输入指针1：x1 的起始地址
+        XS: tl.constexpr  # constexpr 参数：向量长度，在编译时确定
     ):
         # 生成 [0, 1, 2, ..., XS-1] 的索引数组
         idx = tl.arange(0, XS)
@@ -120,54 +122,28 @@ def accuracy_comparison(y_cal, y_ref):
         raise ValueError(f'Invalid or unsupported tensor dtype: {tensor_dtype}')
 
 
-# ========================
-# 主程序入口
-# ========================
-if __name__ == "__main__":
-    # 向量长度
+# ==================== Pytest Test ====================
+@pytest.mark.parametrize("dtype_name, dtype, low, high", [
+    ("fp32", torch.float32, 0, 1),
+    ("fp16", torch.float16, 0, 1),
+    ("bf16", torch.bfloat16, 0, 1),
+    ("i64", torch.int64, 1, 100),
+    ("i32", torch.int32, 1, 100),
+    ("i16", torch.int16, 1, 100),
+    ("i8", torch.int8, 1, 100),
+    ("i1", torch.bool, 0, 2),
+])
+def test_all_dtypes(dtype_name, dtype, low, high):
     N = 1024
-    # 整数随机数范围
-    low = 1
-    high = 100
+    if dtype == torch.bool:
+        x0 = torch.randint(low=low, high=high, size=(N,)).bool().npu()
+        x1 = torch.randint(low=low, high=high, size=(N,)).bool().npu()
+    elif dtype.is_floating_point:
+        x0 = torch.rand((N,), dtype=dtype).npu()
+        x1 = torch.rand((N,), dtype=dtype).npu()
+    else:
+        x0 = torch.randint(low=low, high=high, size=(N,), dtype=dtype).npu()
+        x1 = torch.randint(low=low, high=high, size=(N,), dtype=dtype).npu()
 
-    # 创建各种数据类型的测试张量（已移至 NPU）
-    x0_fp32 = torch.rand((N,), dtype=torch.float32).npu()
-    x1_fp32 = torch.rand((N,), dtype=torch.float32).npu()
-
-    x0_fp16 = torch.rand((N,), dtype=torch.float16).npu()
-    x1_fp16 = torch.rand((N,), dtype=torch.float16).npu()
-
-    x0_bf16 = torch.rand((N,), dtype=torch.bfloat16).npu()
-    x1_bf16 = torch.rand((N,), dtype=torch.bfloat16).npu()
-
-    x0_i64 = torch.randint(low=low, high=high, size=(N,), dtype=torch.int64).npu()
-    x1_i64 = torch.randint(low=low, high=high, size=(N,), dtype=torch.int64).npu()
-
-    x0_i32 = torch.randint(low=low, high=high, size=(N,), dtype=torch.int32).npu()
-    x1_i32 = torch.randint(low=low, high=high, size=(N,), dtype=torch.int32).npu()
-
-    x0_i16 = torch.randint(low=low, high=high, size=(N,), dtype=torch.int16).npu()
-    x1_i16 = torch.randint(low=low, high=high, size=(N,), dtype=torch.int16).npu()
-
-    x0_i8 = torch.randint(low=low, high=high, size=(N,), dtype=torch.int8).npu()
-    x1_i8 = torch.randint(low=low, high=high, size=(N,), dtype=torch.int8).npu()
-
-    x0_i1 = torch.randint(low=0, high=2, size=(N,)).bool().npu()
-    x1_i1 = torch.randint(low=0, high=2, size=(N,)).bool().npu()
-
-    # 测试用例列表：(名称, x0, x1)
-    test_cases = [
-        ('fp32', x0_fp32, x1_fp32),
-        ('fp16', x0_fp16, x1_fp16),
-        ('bf16', x0_bf16, x1_bf16),
-        ('i64', x0_i64, x1_i64),
-        ('i32', x0_i32, x1_i32),
-        ('i16', x0_i16, x1_i16),
-        ('i8', x0_i8, x1_i8),
-        ('i1', x0_i1, x1_i1),
-    ]
-
-    # 遍历所有测试用例
-    for dtype_name, x0, x1 in test_cases:
-        print(f"Running test for {dtype_name}...")
-        test_add(x0, x1)
+    print(f"Running test for {dtype_name}...")
+    run_add(x0, x1)

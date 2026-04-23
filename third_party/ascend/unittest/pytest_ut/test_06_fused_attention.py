@@ -51,8 +51,6 @@ def _attn_fwd_inner(acc_ptr, l_i, m_i, q,  # Accumulator, local l, local m, quer
                     STAGE: tl.constexpr, offs_m: tl.constexpr, offs_n: tl.constexpr,  # Current stage flag, m and n offset indices
                     N_CTX: tl.constexpr, fp8_v: tl.constexpr):  # Total context length, whether to enable FP8 for value precision
     # Set the processing range [lo, hi) for the current stage (in column block units)
-    # causal = true
-    # stage = 1
     # Causal attention, as the name implies, restricts the flow of information during computation,
     # only allowing the model to see the current and previous positions.
     # In other words, the output at the current position can only depend on the input at or before this position,
@@ -217,9 +215,9 @@ def _attn_fwd(Q, K, V, M, Out, acc, sm_scale,
             acc_ptr = tl.zeros([BLOCK_M, HEAD_DIM], dtype=tl.float32)
         else:
             acc_offset = (
-                off_z.to(tl.int64) * stride_qz // stride_qm * HEAD_DIM +
-                off_h.to(tl.int64) * stride_qh // stride_qm * HEAD_DIM +
-                task_m_idx * BLOCK_M * HEAD_DIM
+                off_z.to(tl.int64) * stride_qz // stride_qm * HEAD_DIM
+                + off_h.to(tl.int64) * stride_qh // stride_qm * HEAD_DIM
+                + task_m_idx * BLOCK_M * HEAD_DIM
             )
             acc_ptr = acc + acc_offset
 
@@ -268,16 +266,16 @@ class _attention(torch.autograd.Function):
         """
         Forward computation interface:
         Args:
-            ctx: Context object
-            q: Query tensor (Q), shape [Z, H, N_CTX, HEAD_DIM]
-            k: Key tensor (K), shape [Z, H, N_CTX, HEAD_DIM]
-            v: Value tensor (V), shape [Z, H, N_CTX, HEAD_DIM]
-            causal: Whether to enable causal attention
-            sm_scale: Scaling factor for QK product
-            BM: Q block size (BLOCK_M)
-            BN: K/V block size (BLOCK_N)
+                ctx: Context object
+                q: Query tensor (Q), shape [Z, H, N_CTX, HEAD_DIM]
+                k: Key tensor (K), shape [Z, H, N_CTX, HEAD_DIM]
+                v: Value tensor (V), shape [Z, H, N_CTX, HEAD_DIM]
+                causal: Whether to enable causal attention
+                sm_scale: Scaling factor for QK product
+                BM: Q block size (BLOCK_M)
+                BN: K/V block size (BLOCK_N)
         Returns:
-            o: Attention output tensor, shape [Z, H, N_CTX, HEAD_DIM]
+                o: Attention output tensor, shape [Z, H, N_CTX, HEAD_DIM]
         """
         # shape constraints
         HEAD_DIM_Q, HEAD_DIM_K = q.shape[-1], k.shape[-1]
@@ -286,10 +284,9 @@ class _attention(torch.autograd.Function):
         assert HEAD_DIM_Q == HEAD_DIM_K and HEAD_DIM_K == HEAD_DIM_V
         assert HEAD_DIM_K in {16, 32, 64, 128, 256}
 
-        o = torch.empty_like(q)
+        out = torch.empty_like(q)
         stage = 3 if causal else 1
         extra_kern_args = {}
-        
 
         # Number of NPU cores (adjust based on hardware)
         num_cores = 20
@@ -297,11 +294,11 @@ class _attention(torch.autograd.Function):
         M = torch.empty((q.shape[0], q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
 
         _attn_fwd[(num_cores,)](
-            q, k, v, M, o, acc, sm_scale,
+            q, k, v, M, out, acc, sm_scale,
             q.stride(0), q.stride(1), q.stride(2), q.stride(3),
             k.stride(0), k.stride(1), k.stride(2), k.stride(3),
             v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-            o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+            out.stride(0), out.stride(1), out.stride(2), out.stride(3),
             q.shape[0], q.shape[1], N_CTX=q.shape[2],
             HEAD_DIM=HEAD_DIM_K,
             BLOCK_M=BM,
@@ -309,15 +306,17 @@ class _attention(torch.autograd.Function):
             STAGE=stage,
             **extra_kern_args)
 
-        ctx.save_for_backward(q, k, v, o, M)
+        ctx.save_for_backward(q, k, v, out, M)
         ctx.sm_scale = sm_scale
         ctx.HEAD_DIM = HEAD_DIM_K
         ctx.causal = causal
-        return o
+        return out
+
 
 attention = _attention.apply
 
 
+# ==================== Pytest Test ====================
 @pytest.mark.parametrize("Z, H, N_CTX, HEAD_DIM, causal, dtype, BM, BN", [
     (1, 1, 128, 128, False, torch.float16, 32, 128),
     (1, 1, 128, 128, False, torch.bfloat16, 64, 128),
@@ -327,40 +326,27 @@ attention = _attention.apply
     (4, 32, 1024, 64, False, torch.bfloat16, 64, 128),
     (4, 32, 4096, 64, False, torch.float16, 128, 128),
 ])
-def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype, BM, BN):
-    # Filter out non-integer cases; N_CTX must be divisible by BM and BN, and HEAD_DIM must be divisible by 16.
+def test_attention_fused(Z, H, N_CTX, HEAD_DIM, causal, dtype, BM, BN):
     if N_CTX % BM != 0 or N_CTX % BN != 0 or HEAD_DIM % 16 != 0:
         pytest.skip("Skipping non-divisible case")
 
     torch.manual_seed(20)
-    q = (torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5).requires_grad_())
-    k = (torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5).requires_grad_())
-    v = (torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5).requires_grad_())
+    q = torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5).requires_grad_()
+    k = torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5).requires_grad_()
+    v = torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5).requires_grad_()
 
     sm_scale = 0.5
-
     tri_out = attention(q, k, v, causal, sm_scale, BM, BN)
     ref_out = torch_npu.npu_fusion_attention(
-            q, k, v, H,
-            padding_mask=None,
-            atten_mask=None,
-            scale=sm_scale,
-            keep_prob=1.0,
-            input_layout="BNSD",
-            pre_tockens=65535,
-            next_tockens=65535,
-            sparse_mode=0,
-            )[0]
+        q, k, v, H,
+        padding_mask=None,
+        atten_mask=None,
+        scale=sm_scale,
+        keep_prob=1.0,
+        input_layout="BNSD",
+        pre_tockens=65535,
+        next_tockens=65535,
+        sparse_mode=0,
+    )[0]
 
     torch.testing.assert_close(ref_out, tri_out, atol=1e-2, rtol=1e-2, equal_nan=True)
-    print(f"[PASSED] Attention shape:({Z}, {H}, {N_CTX}, {HEAD_DIM}), BM: {BM}, BN: {BN}, dtype: {dtype}")
-
-
-if __name__ == "__main__":
-    test_op(1, 1, 128, 128, causal=False, dtype=torch.float16, BM=32, BN=128)
-    test_op(1, 1, 128, 128, causal=False, dtype=torch.bfloat16, BM=64, BN=128)
-    test_op(1, 2, 256, 256, causal=False, dtype=torch.bfloat16, BM=32, BN=256)
-    test_op(2, 2, 128, 256, causal=False, dtype=torch.float16, BM=64, BN=128)
-    test_op(4, 32, 64, 64, causal=False, dtype=torch.float16, BM=32, BN=64)
-    test_op(4, 32, 1024, 64, causal=False, dtype=torch.bfloat16, BM=64, BN=128)
-    test_op(4, 32, 4096, 64, causal=False, dtype=torch.float16, BM=128, BN=128)

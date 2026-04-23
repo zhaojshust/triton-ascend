@@ -99,7 +99,6 @@ def layer_norm(x, normalized_shape, weight, bias, eps=1e-5):
         x_arg, y, weight, bias, mean, rstd,  #
         x_arg.stride(0), N, eps,  #
         BLOCK_SIZE=BLOCK_SIZE, num_warps=num_warps, num_ctas=1)
-    # print(kernel.asm['ttir'])
     return y
 
 

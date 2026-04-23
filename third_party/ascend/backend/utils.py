@@ -156,8 +156,15 @@ def _get_npucompiler_path() -> str:
     env = os.environ.copy()
     if is_compile_on_910_95:
         npu_compiler_path = os.path.join(ascend_dir, "bishengir", "bin", "bishengir-compile-a5")
-    else:
-        npu_compiler_path = os.path.join(ascend_dir, "bishengir", "bin", "bishengir-compile")
+        if os.path.exists(npu_compiler_path):
+            npuir_env_path = os.path.dirname(npu_compiler_path)
+            env["PATH"] = npuir_env_path + ":" + env["PATH"]
+            return npu_compiler_path, env
+        npu_compiler_path = shutil.which("bishengir-compile-a5")
+        if npu_compiler_path is not None and os.path.exists(npu_compiler_path):
+            return npu_compiler_path, env
+    
+    npu_compiler_path = os.path.join(ascend_dir, "bishengir", "bin", "bishengir-compile")
     if os.path.exists(npu_compiler_path):
         npuir_env_path = os.path.dirname(npu_compiler_path)
         env["PATH"] = npuir_env_path + ":" + env["PATH"]
@@ -167,7 +174,7 @@ def _get_npucompiler_path() -> str:
             npu_compiler_root = os.getenv("TRITON_NPU_COMPILER_PATH", None)
             if npu_compiler_root is None:
                 raise EnvironmentError(
-                    "Couldn't find executable bishengir-compile or TRITON_NPU_COMPILER_PATH."
+                    "Couldn't find executable bishengir-compile/bishengir-compile-a5 or TRITON_NPU_COMPILER_PATH."
                 )
             npu_compiler_path = os.path.join(npu_compiler_root, "npuc")
     return npu_compiler_path, env
@@ -188,7 +195,7 @@ def _get_bisheng_path() -> str:
 def _is_valid_bishengir_path(path: str) -> bool:
     if not path or not isinstance(path, str):
         return False
-    if os.path.basename(path) != "bishengir-compile":
+    if os.path.basename(path) not in ("bishengir-compile", "bishengir-compile-a5"):
         return False
     if not os.path.isfile(path) or not os.access(path, os.X_OK):
         return False

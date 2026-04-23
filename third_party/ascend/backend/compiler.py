@@ -636,7 +636,7 @@ def linalg_to_bin_enable_npu_compile_A2_A3(linalg: str, metadata, opt):
         if _is_auto_map_parallel_blocks_enabled():
             _compile_option_list += ["--enable-auto-blockify-loop"]
         npu_compiler_path, env = _get_npucompiler_path()
-        if npu_compiler_path.endswith("bishengir-compile"):
+        if npu_compiler_path.endswith("bishengir-compile") or npu_compiler_path.endswith("bishengir-compile-a5"):
             _compile_option_list += [
                 "--enable-hfusion-compile=true",
                 bishengir_hivm_opt,

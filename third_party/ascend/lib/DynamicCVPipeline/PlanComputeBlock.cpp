@@ -20,40 +20,31 @@
  * THE SOFTWARE.
  */
 
-#ifndef TRITON_ADAPTER_ADD_DYNAMIC_CVPIPELINE_PASSES_H
-#define TRITON_ADAPTER_ADD_DYNAMIC_CVPIPELINE_PASSES_H
+#include "ascend/include/DynamicCVPipeline/PlanComputeBlockPass.h"
+#include "mlir/Pass/PassManager.h"
 
-#include "mlir/Pass/Pass.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-
-#include "mlir/IR/PatternMatch.h"
-
-#define GEN_PASS_DECL_ADDDYNAMICCVPIPELINE
-#include "ascend/include/DynamicCVPipeline/Passes.h.inc"
-
-#define GEN_PASS_DEF_ADDDYNAMICCVPIPELINE
-#include "ascend/include/DynamicCVPipeline/Passes.h.inc"
-
-extern bool compileOn91095Flag;
-
-namespace mlir {
-namespace triton {
-std::unique_ptr<OperationPass<ModuleOp>> createAddDynamicCVPipelinePass(
-    const AddDynamicCVPipelineOptions &options = {});
-} // namespace triton
-} // namespace mlir
-
-namespace {
 using namespace mlir;
 using namespace triton;
 
-class AddDynamicCVPipelinePass
-    : public ::impl::AddDynamicCVPipelineBase<AddDynamicCVPipelinePass> {
-public:
-    explicit AddDynamicCVPipelinePass(const AddDynamicCVPipelineOptions &options);
-    void runOnOperation() override;
-};
+// Run the pass
+void PlanComputeBlockPass::runOnOperation()
+{
+    ModuleOp module = getOperation();
+    OpPassManager pm(module.getOperationName());
 
-} // namespace
+    // TODO: Complete the following 4 steps:
+    // OpClassify, Plan Cube BLock, Plan Vector Block, Reorder
 
-#endif // TRITON_ADAPTER_ADD_DYNAMIC_CVPIPELINE_PASSES_H
+    if (failed(runPipeline(pm, module))) {
+        signalPassFailure();
+        return;
+    }
+}
+namespace mlir {
+namespace triton {
+std::unique_ptr<OperationPass<ModuleOp>> createPlanComputeBlockPass()
+{
+    return std::make_unique<PlanComputeBlockPass>();
+}
+} // namespace triton
+} // namespace mlir

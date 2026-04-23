@@ -47,10 +47,10 @@ void AddDynamicCVPipelinePass::runOnOperation()
     auto moduleOp = getOperation();
     compileOn91095Flag = this->compileOn91095;
 
-    LDBG("enter pass");
+    LDBG("Enter pass");
 
     if (!compileOn91095Flag) {
-        llvm::errs() << "add-dynamic-cv-pipeline is only supported on 91095 now.\n";
+        llvm::errs() << "Add-dynamic-cv-pipeline is only supported on 91095 now.\n";
         return;
     }
 
@@ -60,11 +60,11 @@ void AddDynamicCVPipelinePass::runOnOperation()
     pm.addPass(createPlanComputeBlockPass());
 
     if (failed(runPipeline(pm, getOperation()))) {
-        moduleOp->emitError("[AddDynamicCVPipeline] pass failed!");
+        moduleOp->emitError() << "[" << DEBUG_TYPE << "] Pass failed!";
         signalPassFailure();
     }
 
-    LDBG("process successfully");
+    LDBG("Process successfully");
 }
 
 std::unique_ptr<OperationPass<ModuleOp>> mlir::triton::createAddDynamicCVPipelinePass(

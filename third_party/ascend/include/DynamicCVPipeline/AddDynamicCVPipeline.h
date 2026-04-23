@@ -26,8 +26,6 @@
 #include "mlir/Pass/Pass.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
-#include "mlir/IR/PatternMatch.h"
-
 #define GEN_PASS_DECL_ADDDYNAMICCVPIPELINE
 #include "ascend/include/DynamicCVPipeline/Passes.h.inc"
 

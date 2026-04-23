@@ -20,8 +20,13 @@
  * THE SOFTWARE.
  */
 
-#include "ascend/include/DynamicCVPipeline/PlanComputeBlockPass.h"
 #include "mlir/Pass/PassManager.h"
+#include "llvm/Support/Debug.h"
+#include "ascend/include/DynamicCVPipeline/PlanComputeBlockPass.h"
+
+static constexpr const char *DEBUG_TYPE = "PlanComputeBlock";
+#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
+#define LDBG(X) LLVM_DEBUG(DBGS() << (X) << "\n")
 
 using namespace mlir;
 using namespace triton;
@@ -31,6 +36,7 @@ void PlanComputeBlockPass::runOnOperation()
 {
     ModuleOp module = getOperation();
     OpPassManager pm(module.getOperationName());
+    LDBG("Enter pass.");
 
     // Step 1: Run OpClassifierPass to classify operations
 
@@ -41,9 +47,11 @@ void PlanComputeBlockPass::runOnOperation()
     // Step 4: Reorder
 
     if (failed(runPipeline(pm, module))) {
+        module->emitError() << "[" << DEBUG_TYPE << "] Pass failed!";
         signalPassFailure();
-        return;
     }
+
+    LDBG("Process successfully");
 }
 namespace mlir {
 namespace triton {

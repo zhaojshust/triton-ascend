@@ -39,7 +39,7 @@ tt.func @triton_indirect_store(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: 
     %2 = tt.addptr %1, %0 : tensor<4096x!tt.ptr<i64>>, tensor<4096xi32>
     %3 = tt.load %2 : tensor<4096x!tt.ptr<i64>>
     %4 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<4096x!tt.ptr<f32>>
-    %5 = tt.addptr %4, %0 : tensor<4096x!tt.ptr<f32>>, tensor<4096xi64>
+    %5 = tt.addptr %4, %0 : tensor<4096x!tt.ptr<f32>>, tensor<4096xi32>
     %6 = tt.load %5 : tensor<4096x!tt.ptr<f32>>
     annotation.mark %6 {mayDiscretememaccess} : tensor<4096xf32>
     %7 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<4096x!tt.ptr<f32>>
@@ -56,7 +56,7 @@ tt.func @triton_indirect_store_error_mark(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f3
     %2 = tt.addptr %1, %0 : tensor<4096x!tt.ptr<i64>>, tensor<4096xi32>
     %3 = tt.load %2 : tensor<4096x!tt.ptr<i64>>
     %4 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<4096x!tt.ptr<f32>>
-    %5 = tt.addptr %4, %0 : tensor<4096x!tt.ptr<f32>>, tensor<4096xi64>
+    %5 = tt.addptr %4, %0 : tensor<4096x!tt.ptr<f32>>, tensor<4096xi32>
     %6 = tt.load %5 : tensor<4096x!tt.ptr<f32>>
     annotation.mark %6 {error_mark} : tensor<4096xf32>
     %7 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<4096x!tt.ptr<f32>>

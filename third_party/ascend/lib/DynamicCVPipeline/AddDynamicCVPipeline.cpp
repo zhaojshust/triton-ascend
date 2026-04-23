@@ -23,6 +23,7 @@
 #include "mlir/Pass/PassManager.h"
 #include "llvm/Support/Debug.h"
 #include "ascend/include/DynamicCVPipeline/Passes.h"
+#include "ascend/include/DynamicCVPipeline/PlanComputeBlockPass.h"
 
 static constexpr const char *DEBUG_TYPE = "AddDynamicCVPipeline";
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -56,6 +57,7 @@ void AddDynamicCVPipelinePass::runOnOperation()
     PassManager pm(&getContext(), moduleOp.getOperationName());
 
     // todo: add related passes.
+    pm.addPass(createPlanComputeBlockPass());
 
     if (failed(runPipeline(pm, getOperation()))) {
         moduleOp->emitError("[AddDynamicCVPipeline] pass failed!");

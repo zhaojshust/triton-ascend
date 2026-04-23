@@ -43,11 +43,6 @@ public:
 
     // Run the pass
     void runOnOperation() override;
-
-    // Get pass name
-    StringRef getArgument() const override { return "plan-compute-block"; }
-
-    StringRef getDescription() const override { return "Partition operations into compute blocks based on core type"; }
 };
 
 // Create the pass

@@ -32,8 +32,13 @@ void PlanComputeBlockPass::runOnOperation()
     ModuleOp module = getOperation();
     OpPassManager pm(module.getOperationName());
 
-    // TODO: Complete the following 4 steps:
-    // OpClassify, Plan Cube BLock, Plan Vector Block, Reorder
+    // Step 1: Run OpClassifierPass to classify operations
+
+    // Step 2: Partition compute blocks for core_type=cube
+
+    // Step 3: Partition compute blocks for core_type=vector
+
+    // Step 4: Reorder
 
     if (failed(runPipeline(pm, module))) {
         signalPassFailure();

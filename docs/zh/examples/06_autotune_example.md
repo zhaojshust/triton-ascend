@@ -123,7 +123,7 @@ if __name__ == "__main__":
 @triton.autotune(
     configs=[],
     key=["n_elements"],
-}
+)
 @triton.jit
 def add_kernel(
     x_ptr,  # *指向*第一个输入向量的指针。

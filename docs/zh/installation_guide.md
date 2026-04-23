@@ -12,7 +12,7 @@
 
 ### Python版本要求
 
-当前Triton-Ascend要求的Python版本为:**py3.9-py3.11**。
+当前 Triton-Ascend 要求的 Python 版本为 **3.9 - 3.11**。
 
 ### 安装CANN
 
@@ -44,7 +44,7 @@
 
 ### 安装torch_npu
 
-当前配套的torch_npu版本为2.7.1版本。
+当前配套的 torch_npu 版本为 2.7.1。
 
 ```bash
 pip install torch_npu==2.7.1
@@ -56,7 +56,7 @@ pip install torch_npu==2.7.1
 pip install torch==2.7.1+cpu --index-url https://download.pytorch.org/whl/cpu
 ```
 
-<a id="pip-base"></a>
+<a id="code-require"></a>
 
 ## 通过pip安装Triton-Ascend
 
@@ -160,7 +160,7 @@ pip install -e python
 
 ### 手动安装 - 基于LLVM构建
 
-Triton 使用 LLVM22 为 GPU 和 CPU 生成代码。同样，昇腾的毕昇编译器也依赖 LLVM 生成 NPU 代码，因此需要编译 LLVM 源码才能使用。请关注依赖的 LLVM 特定版本。LLVM的构建支持两种构建方式，**以下两种方式二选一即可**，无需重复执行。
+Triton 使用 LLVM 22 为 GPU 和 CPU 生成代码。同样，昇腾的毕昇编译器也依赖 LLVM 生成 NPU 代码，因此需要编译 LLVM 源码才能使用。请关注依赖的 LLVM 特定版本。LLVM的构建支持两种构建方式，**以下两种方式二选一即可**，无需重复执行。
 
 #### 代码准备: `git checkout` 检出指定版本的LLVM
 

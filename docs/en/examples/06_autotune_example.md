@@ -163,7 +163,7 @@ Notes: 1. The split axis parameter must be multiplied by `tl.program_id()`. 2. T
 
 ```Python
 @triton.autotune(
-    key={"n_elements"} # It needs to be specified.
+    key=["n_elements"] # It needs to be specified.
     ...
 )
 @triton.jit
@@ -197,7 +197,7 @@ Notes: 1. The tiling axis parameters must be used in the call of `tl.arange()` a
 
 ```Python
 @triton.autotune(
-    key={"n_rows", "n_cols"} # It needs to be specified.
+    key=["n_rows", "n_cols"] # It needs to be specified.
     ...
 )
 @triton.jit
@@ -233,7 +233,7 @@ Notes: 1. The low-dimensional axis must be computed using `tl.arange()` and slic
 
 ```Python
 @triton.autotune(
-    key={"n_rows", "n_cols"} # Automatically allocated in the order of {"x": "n_rows", "y": "n_cols"}
+    key=["n_rows", "n_cols"] # Automatically allocated in the order of {"x": "n_rows", "y": "n_cols"}
     ...
 )
 @triton.jit

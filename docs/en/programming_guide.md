@@ -32,11 +32,11 @@ According to the sample code, fix the number of cores, and then process task blo
 ```python
 NUM_CORE = vectorcore_num
 grid = (NUM_CORE ,) 
-_attn_fwd[grid](Q, K, V, M, Out, acc, scale......)
+_attn_fwd[grid](Q, K, V, M, Out, acc, scale, ...)
 
 @triton.jit
 def _attn_fwd(Q, K, V, M, Out, acc, scale,  
-              ......
+              ...,
               stride_qz, stride_qh, 
               Z: tl.constexpr, H: tl.constexpr,
               N_CTX: tl.constexpr,
@@ -191,7 +191,7 @@ Before the AI Core performs computation, data needs to be transferred to the on-
 +   base_offset = pid * BLOCK_SIZE
     
 +   # Calculate the total number of blocks that need to be processed
-+   num_sub_blocks = BLOCK_SIZE // BLOCK_SIZE_SUB
++   num_sub_blocks = tl.cdiv(BLOCK_SIZE, BLOCK_SIZE_SUB)
     
 +   # Loop processing each sub block
 +   for sub_block_idx in range(num_sub_blocks):

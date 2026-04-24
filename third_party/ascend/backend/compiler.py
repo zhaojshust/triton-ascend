@@ -568,7 +568,7 @@ def linalg_to_bin_enable_npu_compile_910_95(linalg: str, metadata, opt):
             + ["-o", bin_file]
         )
         vf_merge_level = metadata["vf_merge_level"]
-        if vf_merge_level is not None:
+        if vf_merge_level is not None and vf_merge_level != 1:
             cmd_list += [f"--enable-vf-merge-level={vf_merge_level}"]
 
         hfusion_enable_multiple_consumer_fusion = metadata["hfusion_enable_multiple_consumer_fusion"]

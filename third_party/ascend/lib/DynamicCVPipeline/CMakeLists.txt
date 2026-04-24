@@ -1,5 +1,6 @@
 add_triton_library(DynamicCVPipeline
   AddDynamicCVPipeline.cpp
+  PlanComputeBlock.cpp
 
   DEPENDS
   AddDynamicCVPipelinePassIncGen

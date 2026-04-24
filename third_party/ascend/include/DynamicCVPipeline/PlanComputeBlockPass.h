@@ -20,38 +20,32 @@
  * THE SOFTWARE.
  */
 
-#ifndef TRITON_ADAPTER_ADD_DYNAMIC_CVPIPELINE_PASSES_H
-#define TRITON_ADAPTER_ADD_DYNAMIC_CVPIPELINE_PASSES_H
+#ifndef TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMPUTE_BLOCK_PASS_H
+#define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMPUTE_BLOCK_PASS_H
 
+#include "mlir/Dialect/Linalg/TransformOps/DialectExtension.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-
-#define GEN_PASS_DECL_ADDDYNAMICCVPIPELINE
-#include "ascend/include/DynamicCVPipeline/Passes.h.inc"
-
-#define GEN_PASS_DEF_ADDDYNAMICCVPIPELINE
-#include "ascend/include/DynamicCVPipeline/Passes.h.inc"
-
-extern bool compileOn91095Flag;
 
 namespace mlir {
 namespace triton {
-std::unique_ptr<OperationPass<ModuleOp>> createAddDynamicCVPipelinePass(
-    const AddDynamicCVPipelineOptions &options = {});
-} // namespace triton
-} // namespace mlir
 
-namespace {
-using namespace mlir;
-using namespace triton;
-
-class AddDynamicCVPipelinePass
-    : public ::impl::AddDynamicCVPipelineBase<AddDynamicCVPipelinePass> {
+// PlanComputeBlockPass for partitioning operations into compute blocks
+class PlanComputeBlockPass : public PassWrapper<PlanComputeBlockPass, OperationPass<ModuleOp>> {
 public:
-    explicit AddDynamicCVPipelinePass(const AddDynamicCVPipelineOptions &options);
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PlanComputeBlockPass)
+
+    // Constructor
+    PlanComputeBlockPass() = default;
+
+    // Run the pass
     void runOnOperation() override;
 };
 
-} // namespace
+// Create the pass
+std::unique_ptr<OperationPass<ModuleOp>> createPlanComputeBlockPass();
 
-#endif // TRITON_ADAPTER_ADD_DYNAMIC_CVPIPELINE_PASSES_H
+} // namespace triton
+} // namespace mlir
+
+#endif // TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMPUTE_BLOCK_PASS_H

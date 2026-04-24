@@ -22,53 +22,42 @@
 
 #include "mlir/Pass/PassManager.h"
 #include "llvm/Support/Debug.h"
-#include "ascend/include/DynamicCVPipeline/Passes.h"
 #include "ascend/include/DynamicCVPipeline/PlanComputeBlockPass.h"
 
-static constexpr const char *DEBUG_TYPE = "AddDynamicCVPipeline";
+static constexpr const char *DEBUG_TYPE = "PlanComputeBlock";
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << (X) << "\n")
 
-namespace mlir {
-namespace triton {
-#define GEN_PASS_DEF_ADDDYNAMICCVPIPELINE
-#include "ascend/include/DynamicCVPipeline/Passes.h.inc"
-} // namespace triton
-} // namespace mlir
-
 using namespace mlir;
+using namespace triton;
 
-AddDynamicCVPipelinePass::AddDynamicCVPipelinePass(
-    const AddDynamicCVPipelineOptions &options)
-    : AddDynamicCVPipelineBase(options) {}
-
-void AddDynamicCVPipelinePass::runOnOperation()
+// Run the pass
+void PlanComputeBlockPass::runOnOperation()
 {
-    auto moduleOp = getOperation();
-    compileOn91095Flag = this->compileOn91095;
+    ModuleOp module = getOperation();
+    OpPassManager pm(module.getOperationName());
+    LDBG("Enter pass.");
 
-    LDBG("Enter pass");
+    // Step 1: Run OpClassifierPass to classify operations
 
-    if (!compileOn91095Flag) {
-        llvm::errs() << "Add-dynamic-cv-pipeline is only supported on 91095 now.\n";
-        return;
-    }
+    // Step 2: Partition compute blocks for core_type=cube
 
-    PassManager pm(&getContext(), moduleOp.getOperationName());
+    // Step 3: Partition compute blocks for core_type=vector
 
-    // todo: add related passes.
-    pm.addPass(createPlanComputeBlockPass());
+    // Step 4: Reorder
 
-    if (failed(runPipeline(pm, getOperation()))) {
-        moduleOp->emitError() << "[" << DEBUG_TYPE << "] Pass failed!";
+    if (failed(runPipeline(pm, module))) {
+        module->emitError() << "[" << DEBUG_TYPE << "] Pass failed!";
         signalPassFailure();
     }
 
     LDBG("Process successfully");
 }
-
-std::unique_ptr<OperationPass<ModuleOp>> mlir::triton::createAddDynamicCVPipelinePass(
-    const AddDynamicCVPipelineOptions &options)
+namespace mlir {
+namespace triton {
+std::unique_ptr<OperationPass<ModuleOp>> createPlanComputeBlockPass()
 {
-    return std::make_unique<AddDynamicCVPipelinePass>(options);
+    return std::make_unique<PlanComputeBlockPass>();
 }
+} // namespace triton
+} // namespace mlir

@@ -200,7 +200,7 @@ def linalg_to_bc_by_triton_mlir_opt(linalg: str, metadata, opt):
         ttadapter_path = os.path.join(tmpdir, "kernel.ttadapter.mlir")
         bc_path = os.path.join(tmpdir, "kernel.mlirbc")
         Path(ttadapter_path).write_text(linalg)
-        
+
         triton_mlir_opt_path = _get_triton_mlir_opt_path()
 
         # The --emit-bytecode flag ensures output is in BC format
@@ -220,7 +220,7 @@ def linalg_to_bc_by_triton_mlir_opt(linalg: str, metadata, opt):
         # Read bytecode as binary before temp directory is cleaned up
         with open(bc_path, "rb") as f:
             bc_data = f.read()
-        
+
         if opt.debug:
             dump_manager = get_dump_manager(metadata["hash"])
             dump_manager.put(bc_data, "kernel.mlirbc", binary=True)
@@ -263,7 +263,7 @@ def bc_to_linalg_by_bishengir_opt(bc_data: bytes, metadata, opt):
 
         # Read the generated MLIR text
         linalg_text = Path(mlir_path).read_text()
-        
+
         if opt.debug:
             dump_manager = get_dump_manager(metadata["hash"])
             dump_manager.put(linalg_text, "kernel.mlir", binary=False)
@@ -536,8 +536,14 @@ def linalg_to_bin_enable_npu_compile_910_95(linalg: str, metadata, opt):
                 _compile_option_list += \
                     [f"--link-aicore-bitcode={bitcode}"]
 
+        enable_auto_blockify = metadata["enable_auto_blockify"]
         if _is_auto_map_parallel_blocks_enabled():
-            _compile_option_list += ["--enable-auto-blockify-loop"]
+            if (enable_auto_blockify is None or enable_auto_blockify):
+                _compile_option_list += ["--enable-auto-blockify-loop"]
+        else:
+            if enable_auto_blockify:
+                _compile_option_list += ["--enable-auto-blockify-loop"]
+
         npu_compiler_path, env = _get_npucompiler_path()
         if npu_compiler_path.endswith("bishengir-compile"):
             _compile_option_list += [
@@ -835,6 +841,7 @@ class NPUOptions:
     reg_inc_consumer: int = 0
 
     auto_blockify_size: int = 1
+    enable_auto_blockify: bool = None
     compile_on_910_95: bool = is_compile_on_910_95
     optimize_dynamic_offset: bool = False
     enable_mask_fallback_conversion: bool = False
@@ -845,7 +852,6 @@ class NPUOptions:
     enable_fp_fusion: bool = True
     allow_fp8e4nv: bool = False
     auto_tile_and_bind_subblock: bool = True
-    vf_merge_level: int = 0
     supported_fp8_dtypes: Tuple[str] = ("fp8e5", "fp8e4b15", "fp8e4nv", "fp8e4b8", "fp8e5b16")
     deprecated_fp8_dtypes: Tuple[str] = ()
     vf_merge_level: int = 1

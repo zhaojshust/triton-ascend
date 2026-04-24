@@ -1,4 +1,4 @@
-// RUN: triton-opt %s --discrete-mask-access-conversion --split-input-file %s | FileCheck %s
+// RUN: triton-opt --discrete-mask-access-conversion --split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: tt.func @atomic_add_i32
 // CHECK: %[[default:.*]] = arith.constant dense<0> : tensor<1024xi32>

@@ -736,7 +736,7 @@ void TritonToUnstructurePass::getDependentDialects(
   registry.insert<func::FuncDialect, arith::ArithDialect, linalg::LinalgDialect,
                   affine::AffineDialect, scf::SCFDialect, tensor::TensorDialect,
                   bufferization::BufferizationDialect, memref::MemRefDialect,
-                  triton::TritonDialect>();
+                  triton::TritonDialect, triton::ascend::TritonAscendDialect>();
 }
 
 std::unique_ptr<OperationPass<ModuleOp>> triton::createTritonToUnstructurePass(

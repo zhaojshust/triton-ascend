@@ -1,4 +1,4 @@
-// RUN: triton-opt %s --triton-to_hivm | FileCheck %s
+// RUN: triton-opt %s --triton-to-hivm | FileCheck %s
 
 // CHECK-LABEL: tt.func @triton_func
 tt.func @triton_func() {

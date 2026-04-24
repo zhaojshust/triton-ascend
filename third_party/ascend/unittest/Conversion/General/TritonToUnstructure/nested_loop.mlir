@@ -69,8 +69,7 @@ tt.func public @test_kernel(%arg0: !tt.ptr<i32> {tt.divisibility = 16 : i32}, %a
 // CHECK:                 %[[VAL_45:.*]] = tensor.extract %[[VAL_35]]{{\[}}%[[VAL_43]]] {DiscreteMemAccess} : tensor<128xi64>
 // CHECK:                 %[[VAL_46:.*]] = tt.addptr %[[VAL_3]], %[[VAL_45]] : !tt.ptr<i32>, i64
 // CHECK:                 %[[VAL_47:.*]] = tt.load %[[VAL_46]] {DiscreteMemAccess} : !tt.ptr<i32>
-// CHECK:                 %[[VAL_49:.*]] = tensor.insert_slice %{{.*}} into %[[VAL_44]]{{\[}}%[[VAL_43]]] [1] [1] : tensor<1xi32> into tensor<128xi32>
-// CHECK:                 scf.yield {DiscreteMemAccess} %[[VAL_49]] : tensor<128xi32>
+// CHECK:                 scf.yield {DiscreteMemAccess} %{{.*}} : tensor<128xi32>
 // CHECK:               } {ExtractedLoadOrStore}
 // CHECK:               %[[VAL_50:.*]] = arith.addi %[[VAL_40]], %[[VAL_42]] : tensor<128xi32>
 // CHECK:               tt.store %[[VAL_37]], %[[VAL_50]], %[[VAL_38]] : tensor<128x!tt.ptr<i32>>
@@ -186,9 +185,7 @@ tt.func public @test_kernel2(%arg0: !tt.ptr<i32> {tt.divisibility = 16 : i32}, %
 // CHECK:                 %[[VAL_59:.*]] = tensor.extract %[[VAL_48]]{{\[}}%[[VAL_57]]] {DiscreteMemAccess} : tensor<128xi64>
 // CHECK:                 %[[VAL_60:.*]] = tt.addptr %[[VAL_3]], %[[VAL_59]] : !tt.ptr<i32>, i64
 // CHECK:                 %[[VAL_61:.*]] = tt.load %[[VAL_60]] {DiscreteMemAccess} : !tt.ptr<i32>
-// CHECK:                 %[[VAL_62:.*]] = tt.splat %[[VAL_61]] : i32 -> tensor<1xi32>
-// CHECK:                 %[[VAL_63:.*]] = tensor.insert_slice %[[VAL_62]] into %[[VAL_58]]{{\[}}%[[VAL_57]]] [1] [1] : tensor<1xi32> into tensor<128xi32>
-// CHECK:                 scf.yield {DiscreteMemAccess} %[[VAL_63]] : tensor<128xi32>
+// CHECK:                 scf.yield {DiscreteMemAccess} %{{.*}} : tensor<128xi32>
 // CHECK:               } {ExtractedLoadOrStore}
 // CHECK:               %[[VAL_64:.*]] = arith.addi %[[VAL_54]], %[[VAL_56]] : tensor<128xi32>
 // CHECK:               tt.store %[[VAL_51]], %[[VAL_64]], %[[VAL_52]] : tensor<128x!tt.ptr<i32>>

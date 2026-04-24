@@ -494,19 +494,21 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
     op->emitError("meeting unexpected UCC in LoadConverter!");
     return failure();
   } else {
-    memref::SubViewOp srcSubView = mstate.getSubview(ptr, loc, rewriter);
-    memref::SubViewOp dstSubView = mstate.getSubview(allocOp, loc, rewriter);
-    MemRefType dstSubViewType = mlir::cast<MemRefType>(dstSubView.getType());
+    if (mstate.isMemrefSubviewValid(ptr, rewriter)) {
+      memref::SubViewOp srcSubView = mstate.getSubview(ptr, loc, rewriter);
+      memref::SubViewOp dstSubView = mstate.getSubview(allocOp, loc, rewriter);
+      MemRefType dstSubViewType = mlir::cast<MemRefType>(dstSubView.getType());
 
-    auto [srcStrides, srcOffset] = dstSubViewType.getStridesAndOffset();
-    MemRefType castType = MemRefType::get(
-      dstSubViewType.getShape(),
-      dstSubViewType.getElementType(),
-      makeStridedLinearLayoutMap(srcStrides, srcOffset, rewriter.getContext())
-    );
-    auto castOp = rewriter.create<memref::CastOp>(loc, castType, dstSubView);
-    auto copyOp = rewriter.create<memref::CopyOp>(loc, srcSubView, castOp);
-    propagateWasBoolToInt8Attr(op.getOperation(), copyOp.getOperation(), rewriter);
+      auto [srcStrides, srcOffset] = dstSubViewType.getStridesAndOffset();
+      MemRefType castType = MemRefType::get(
+        dstSubViewType.getShape(),
+        dstSubViewType.getElementType(),
+        makeStridedLinearLayoutMap(srcStrides, srcOffset, rewriter.getContext())
+      );
+      auto castOp = rewriter.create<memref::CastOp>(loc, castType, dstSubView);
+      auto copyOp = rewriter.create<memref::CopyOp>(loc, srcSubView, castOp);
+      propagateWasBoolToInt8Attr(op.getOperation(), copyOp.getOperation(), rewriter);
+    }
 
     if (mayImplicitTransposeWithLastAxis && allocOp.getDefiningOp<memref::AllocOp>()) {
       auto markOp = rewriter.create<annotation::MarkOp>(loc, allocOp);

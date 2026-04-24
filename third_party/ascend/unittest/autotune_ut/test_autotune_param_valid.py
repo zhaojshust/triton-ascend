@@ -25,6 +25,7 @@ import torch
 import torch_npu
 import triton
 import triton.backends.ascend.runtime
+import triton.backends.ascend.runtime.autotuner as ascend_autotuner
 import triton.language as tl
 
 
@@ -173,3 +174,293 @@ def test_add_no_keyname():
             pass
     except ValueError as e:
         assert "All keys in 'key' must be valid axis names" in str(e)
+
+
+def test_expand_explicit_configs_with_hints():
+    base_configs = [
+        triton.Config({"BLOCK_SIZE": 128}),
+        triton.Config({"BLOCK_SIZE": 256}),
+    ]
+
+    @triton.autotune(
+        configs=base_configs,
+        key=["n_elements"],
+        hints={
+            "GROUP_M": [2, 4, 8],
+        }
+    )
+    @triton.jit
+    def kernel_with_group_hint(
+            x_ptr,
+            output_ptr,
+            n_elements,
+            BLOCK_SIZE: tl.constexpr,
+            GROUP_M: tl.constexpr,
+    ):
+        pass
+
+    assert len(kernel_with_group_hint.configs) == 12
+    actual_triplets = {
+        (cfg.kwargs["BLOCK_SIZE"], cfg.kwargs["GROUP_M"], cfg.num_stages)
+        for cfg in kernel_with_group_hint.configs
+    }
+    expected_triplets = {
+        (128, 2, 1), (128, 2, 2),
+        (128, 4, 1), (128, 4, 2),
+        (128, 8, 1), (128, 8, 2),
+        (256, 2, 1), (256, 2, 2),
+        (256, 4, 1), (256, 4, 2),
+        (256, 8, 1), (256, 8, 2),
+    }
+    assert actual_triplets == expected_triplets
+
+
+def test_expand_hints_multibuffer_maps_to_num_stages():
+    @triton.autotune(
+        configs=[triton.Config({"BLOCK_SIZE": 128})],
+        key=["n_elements"],
+        hints={
+            "GROUP_M": [2],
+            "multibuffer": [True, False],
+        }
+    )
+    @triton.jit
+    def kernel_with_multibuffer_alias(
+            x_ptr,
+            output_ptr,
+            n_elements,
+            BLOCK_SIZE: tl.constexpr,
+            GROUP_M: tl.constexpr,
+    ):
+        pass
+
+    assert len(kernel_with_multibuffer_alias.configs) == 2
+    assert {cfg.num_stages for cfg in kernel_with_multibuffer_alias.configs} == {1, 2}
+    assert all("multibuffer" not in cfg.kwargs for cfg in kernel_with_multibuffer_alias.configs)
+    assert kernel_with_multibuffer_alias.config_hints == {
+        "GROUP_M": [2],
+        "num_stages": [2, 1],
+    }
+
+
+def test_expand_hints_explicit_num_stages_precedes_multibuffer():
+    @triton.autotune(
+        configs=[triton.Config({"BLOCK_SIZE": 128})],
+        key=["n_elements"],
+        hints={
+            "GROUP_M": [2, 4],
+            "num_stages": [1],
+            "multibuffer": [True, False],
+        }
+    )
+    @triton.jit
+    def kernel_num_stages_precedence(
+            x_ptr,
+            output_ptr,
+            n_elements,
+            BLOCK_SIZE: tl.constexpr,
+            GROUP_M: tl.constexpr,
+    ):
+        pass
+
+    assert len(kernel_num_stages_precedence.configs) == 2
+    assert {cfg.num_stages for cfg in kernel_num_stages_precedence.configs} == {1}
+    assert kernel_num_stages_precedence.config_hints == {
+        "GROUP_M": [2, 4],
+        "num_stages": [1],
+    }
+
+
+def test_expand_explicit_configs_with_mixed_hints():
+    base_configs = [
+        triton.Config({"BLOCK_SIZE": 128}),
+    ]
+
+    @triton.autotune(
+        configs=base_configs,
+        key=["n_elements"],
+        hints={
+            "GROUP_M": [2, 4],
+            "num_stages": [1, 2],
+            "enable_ubuf_saving": [True, False],
+        }
+    )
+    @triton.jit
+    def kernel_with_mixed_hints(
+            x_ptr,
+            output_ptr,
+            n_elements,
+            BLOCK_SIZE: tl.constexpr,
+            GROUP_M: tl.constexpr,
+    ):
+        pass
+
+    assert len(kernel_with_mixed_hints.configs) == 8
+    assert {cfg.num_stages for cfg in kernel_with_mixed_hints.configs} == {1, 2}
+    assert {cfg.kwargs["GROUP_M"] for cfg in kernel_with_mixed_hints.configs} == {2, 4}
+    assert {cfg.kwargs["enable_ubuf_saving"] for cfg in kernel_with_mixed_hints.configs} == {True, False}
+
+
+def test_expand_hints_coexist_with_axis_hints():
+    base_configs = [
+        triton.Config({"BLOCK_SIZE": 128, "BLOCK_SIZE_SUB": 32}),
+        triton.Config({"BLOCK_SIZE": 256, "BLOCK_SIZE_SUB": 64}),
+    ]
+
+    @triton.autotune(
+        configs=base_configs,
+        key={"x": "n_elements"},
+        hints={
+            "split_params": {"x": "BLOCK_SIZE"},
+            "tiling_params": {"x": "BLOCK_SIZE_SUB"},
+            "low_dim_axes": ["x"],
+            "reduction_axes": [],
+            "GROUP_M": [2, 4],
+        }
+    )
+    @triton.jit
+    def kernel_with_axis_hints(
+            x_ptr,
+            output_ptr,
+            n_elements,
+            BLOCK_SIZE: tl.constexpr,
+            BLOCK_SIZE_SUB: tl.constexpr,
+            GROUP_M: tl.constexpr,
+    ):
+        pass
+
+    assert len(kernel_with_axis_hints.configs) == 8
+    assert {cfg.num_stages for cfg in kernel_with_axis_hints.configs} == {1, 2}
+    assert kernel_with_axis_hints.hints == {
+        "split_params": {"x": "BLOCK_SIZE"},
+        "tiling_params": {"x": "BLOCK_SIZE_SUB"},
+        "low_dim_axes": ["x"],
+        "reduction_axes": [],
+    }
+    assert kernel_with_axis_hints.config_hints == {
+        "GROUP_M": [2, 4],
+        "num_stages": [1, 2],
+    }
+
+
+def test_expand_hints_invalid_key():
+    with pytest.raises(ValueError, match="Invalid hints keys for config expansion"):
+        @triton.autotune(
+            configs=[triton.Config({"BLOCK_SIZE": 128})],
+            key=["n_elements"],
+            hints={
+                "INVALID_KEY": [1, 2],
+            }
+        )
+        @triton.jit
+        def kernel_invalid_hint_key(
+                x_ptr,
+                output_ptr,
+                n_elements,
+                BLOCK_SIZE: tl.constexpr,
+        ):
+            pass
+
+
+def test_expand_hints_invalid_value_container():
+    with pytest.raises(ValueError, match="must be a non-empty list/tuple"):
+        @triton.autotune(
+            configs=[triton.Config({"BLOCK_SIZE": 128})],
+            key=["n_elements"],
+            hints={
+                "GROUP_M": 4,
+            }
+        )
+        @triton.jit
+        def kernel_invalid_hint_value(
+                x_ptr,
+                output_ptr,
+                n_elements,
+                BLOCK_SIZE: tl.constexpr,
+                GROUP_M: tl.constexpr,
+        ):
+            pass
+
+
+def test_expand_hints_invalid_multibuffer_values():
+    with pytest.raises(ValueError, match="must contain only boolean values"):
+        @triton.autotune(
+            configs=[triton.Config({"BLOCK_SIZE": 128})],
+            key=["n_elements"],
+            hints={
+                "multibuffer": [1, 0],
+            }
+        )
+        @triton.jit
+        def kernel_invalid_multibuffer_hint(
+                x_ptr,
+                output_ptr,
+                n_elements,
+                BLOCK_SIZE: tl.constexpr,
+        ):
+            pass
+
+
+def test_expand_hints_invalid_compile_option_value():
+    with pytest.raises(ValueError, match="Invalid value for 'num_stages'"):
+        @triton.autotune(
+            configs=[triton.Config({"BLOCK_SIZE": 128})],
+            key=["n_elements"],
+            hints={
+                "num_stages": [3],
+            }
+        )
+        @triton.jit
+        def kernel_invalid_compile_hint(
+                x_ptr,
+                output_ptr,
+                n_elements,
+                BLOCK_SIZE: tl.constexpr,
+        ):
+            pass
+
+
+def test_expand_hints_require_explicit_configs():
+    with pytest.raises(ValueError, match="Config expansion hints require explicit configs"):
+        @triton.autotune(
+            configs=[],
+            key=["n_elements"],
+            hints={
+                "GROUP_M": [2, 4],
+            }
+        )
+        @triton.jit
+        def kernel_require_configs(
+                x_ptr,
+                output_ptr,
+                n_elements,
+                GROUP_M: tl.constexpr,
+        ):
+            pass
+
+
+def test_non_simt_num_stages_candidates_priority():
+    tuner = object.__new__(ascend_autotuner.AutoTilingTuner)
+    tuner.user_specified_num_stages = None
+    tuner.user_specified_multibuffer = None
+
+    assert tuner._get_non_simt_num_stages_candidates() == [1, 2]
+
+    tuner.user_specified_multibuffer = True
+    assert tuner._get_non_simt_num_stages_candidates() == [2]
+
+    tuner.user_specified_num_stages = 1
+    assert tuner._get_non_simt_num_stages_candidates() == [1]
+
+
+def test_expand_simt_num_warps_configs_default_candidates():
+    tuner = object.__new__(ascend_autotuner.AutoTilingTuner)
+    tuner.user_specified_warps = None
+    tuner.print_autotuning = False
+
+    expanded_configs = tuner._expand_simt_num_warps_configs(
+        [triton.Config({"BLOCK_SIZE": 128})]
+    )
+
+    assert len(expanded_configs) == 4
+    assert [cfg.num_warps for cfg in expanded_configs] == [8, 16, 32, 64]

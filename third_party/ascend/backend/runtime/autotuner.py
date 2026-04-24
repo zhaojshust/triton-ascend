@@ -30,17 +30,159 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 import itertools
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from torch import Tensor
 
 import triton
 from triton.runtime.autotuner import Autotuner, Config
-from triton.tools.get_ascend_devices import is_compile_on_910_95
 
 from .autoparser import (LowDimsAxesParser, PtrNumsParser, ReductionAxesParser,
                          SplitAxesParser, TilingAxesParser)
 from .utils import get_byte_per_numel, is_valid_axis_name, valid_axis_names
+
+_RESERVED_HINT_KEYS = {
+    "split_params",
+    "tiling_params",
+    "low_dim_axes",
+    "reduction_axes",
+    "auto_gen_config",
+}
+_MULTIBUFFER_HINT_KEY = "multibuffer"
+_DEFAULT_HINT_NUM_STAGES = [1, 2]
+
+
+def _get_constexpr_candidates_from_fn(fn) -> List[str]:
+    """
+    Returns all constexpr parameter names from the kernel function definition.
+    """
+    func_ast = fn.parse()
+    constexpr_names = []
+    for node in ast.walk(func_ast):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if not isinstance(node.args, ast.arguments):
+            continue
+        for arg in node.args.args:
+            if not isinstance(arg, ast.arg):
+                continue
+            ann = arg.annotation
+            if (
+                isinstance(ann, ast.Attribute)
+                and isinstance(ann.value, ast.Name)
+                and ann.value.id == "tl"
+                and ann.attr == "constexpr"
+            ):
+                constexpr_names.append(arg.arg)
+        break
+    return constexpr_names
+
+
+def _clone_config_with_kwargs(config: Config, kwargs: Dict[str, object], num_stages: Optional[int] = None) -> Config:
+    return Config(
+        kwargs=kwargs,
+        num_warps=config.num_warps,
+        num_stages=config.num_stages if num_stages is None else num_stages,
+        num_ctas=config.num_ctas,
+        num_buffers_warp_spec=config.num_buffers_warp_spec,
+        num_consumer_groups=config.num_consumer_groups,
+        reg_dec_producer=config.reg_dec_producer,
+        reg_inc_consumer=config.reg_inc_consumer,
+        maxnreg=config.maxnreg,
+        pre_hook=config.pre_hook,
+    )
+
+
+def _split_hints(hints: Optional[Dict[str, object]]):
+    hints = {} if hints is None else dict(hints)
+    reserved_hints = {k: v for k, v in hints.items() if k in _RESERVED_HINT_KEYS}
+    config_hints = {k: v for k, v in hints.items() if k not in _RESERVED_HINT_KEYS}
+    return reserved_hints, config_hints
+
+
+def _multibuffer_to_num_stages(multibuffer: bool) -> int:
+    if not isinstance(multibuffer, bool):
+        raise ValueError(
+            "multibuffer must be a boolean when mapped to num_stages. "
+            f"Got: {type(multibuffer)}"
+        )
+    return 2 if multibuffer else 1
+
+
+def _normalize_config_hints(config_hints: Optional[Dict[str, object]], inject_default_num_stages: bool = False):
+    normalized_hints = {} if config_hints is None else dict(config_hints)
+    has_explicit_num_stages = "num_stages" in normalized_hints
+
+    multibuffer_values = normalized_hints.pop(_MULTIBUFFER_HINT_KEY, None)
+    if multibuffer_values is not None:
+        if not isinstance(multibuffer_values, (list, tuple)) or len(multibuffer_values) == 0:
+            raise ValueError(
+                f"hints['{_MULTIBUFFER_HINT_KEY}'] must be a non-empty list/tuple when used for config expansion."
+            )
+        if not all(isinstance(value, bool) for value in multibuffer_values):
+            raise ValueError(
+                f"hints['{_MULTIBUFFER_HINT_KEY}'] must contain only boolean values."
+            )
+        if not has_explicit_num_stages:
+            normalized_hints["num_stages"] = [
+                _multibuffer_to_num_stages(value) for value in multibuffer_values
+            ]
+
+    if inject_default_num_stages and "num_stages" not in normalized_hints:
+        normalized_hints["num_stages"] = list(_DEFAULT_HINT_NUM_STAGES)
+
+    return normalized_hints
+
+
+def _validate_config_hint_values(config_hints: Dict[str, object], constexpr_names: List[str]):
+    invalid_keys = sorted(
+        key for key in config_hints
+        if key not in constexpr_names and key not in _ALL_PARAMS
+    )
+    if invalid_keys:
+        raise ValueError(
+            "Invalid hints keys for config expansion: {}. "
+            "Keys must be tl.constexpr kernel parameters or supported compile options.".format(invalid_keys)
+        )
+
+    for key, value in config_hints.items():
+        if not isinstance(value, (list, tuple)) or len(value) == 0:
+            raise ValueError(
+                f"hints['{key}'] must be a non-empty list/tuple when used for config expansion."
+            )
+        if key in _VALIDATION_RULES:
+            rule = _VALIDATION_RULES[key]
+            if not rule["check"](value, key):
+                raise ValueError(f"Invalid value for '{key}': {value}. Expected: {rule['desc']}")
+
+
+def _expand_configs_with_hints(fn, configs, config_hints: Dict[str, object]):
+    if not config_hints:
+        return configs
+
+    if not configs:
+        raise ValueError(
+            "Config expansion hints require explicit configs. "
+            "Use 'configs' together with expansion keys in 'hints'."
+        )
+
+    constexpr_names = _get_constexpr_candidates_from_fn(fn)
+    _validate_config_hint_values(config_hints, constexpr_names)
+
+    keys = list(config_hints.keys())
+    values = [config_hints[key] for key in keys]
+    expanded_configs = []
+    for config in configs:
+        for combo in itertools.product(*values):
+            new_kwargs = config.kwargs.copy()
+            num_stages = config.num_stages
+            for key, value in zip(keys, combo):
+                if key == "num_stages":
+                    num_stages = value
+                else:
+                    new_kwargs[key] = value
+            expanded_configs.append(_clone_config_with_kwargs(config, new_kwargs, num_stages))
+    return expanded_configs
 
 
 class AutoTilingTuner(Autotuner):
@@ -73,6 +215,13 @@ class AutoTilingTuner(Autotuner):
             Only the axis name in this param should add perfix 'r' if it's a reduction axis.
         :type key: List[str]
         """
+        reserved_hints, config_hints = _split_hints(hints)
+        config_hints = _normalize_config_hints(
+            config_hints,
+            inject_default_num_stages=bool(configs) and bool(config_hints),
+        )
+        configs = _expand_configs_with_hints(fn, configs, config_hints)
+
         super().__init__(
             fn,
             arg_names,
@@ -88,10 +237,38 @@ class AutoTilingTuner(Autotuner):
             use_cuda_graph,
             do_bench,
         )
-        if not hints:
-            self.hints = {}
-        else:
-            self.hints = hints
+        self.user_defined_do_bench = do_bench is not None
+        # -- reserved_hints (self.hints) vs config_hints (self.config_hints) --
+        # The `hints` dict passed to @triton.autotune is split into two parts by _split_hints():
+        #
+        #   1. reserved_hints (stored in self.hints):
+        #      Keys in _RESERVED_HINT_KEYS = {split_params, tiling_params, low_dim_axes,
+        #      reduction_axes, auto_gen_config}.  These are axis-parsing hints that control
+        #      how TileGenerator derives tiling configs.  They are NOT used for config
+        #      expansion and are passed unchanged to _init_axis_params().
+        #
+        #   2. config_hints (stored in self.config_hints after normalization):
+        #      Keys NOT in _RESERVED_HINT_KEYS (e.g. BLOCK_THRESHOLD, num_stages, a, …).
+        #      Each non-reserved key whose value is a non-empty list/tuple is treated as a
+        #      config expansion hint.  _expand_configs_with_hints() forms a Cartesian product
+        #      between those list values and the explicit configs list, cloning a Config for
+        #      every combination.  Keys that are compile options (e.g. num_stages) write to
+        #      Config.num_stages; all other keys write to Config.kwargs as kernel tl.constexpr
+        #      arguments.  The compatibility alias `multibuffer` is normalized to
+        #      `num_stages` (`True -> 2`, `False -> 1`), and if any config-expansion hints
+        #      are provided without an explicit `num_stages`, the default candidates
+        #      `num_stages=[1, 2]` are injected.
+        #
+        # Example – given hints={"BLOCK_THRESHOLD": [8, 16], "num_stages": [1, 2],
+        #            "split_params": "rstd"}:
+        #   - self.hints       = {"split_params": "rstd"}        (reserved, axis-parsing only)
+        #   - self.config_hints = {"BLOCK_THRESHOLD": [8, 16],  # expands explicit configs
+        #                          "num_stages": [1, 2]}        # via Cartesian product
+        #
+        # Mixing: reserved and config-expansion keys can coexist in the original hints dict;
+        # _split_hints() separates them so that each serves its own purpose without conflict.
+        self.hints = reserved_hints
+        self.config_hints = config_hints
         split_params = self.hints.get("split_params", None)
         tiling_params = self.hints.get("tiling_params", None)
         low_dim_axes = self.hints.get("low_dim_axes", None)
@@ -114,8 +291,8 @@ class AutoTilingTuner(Autotuner):
         self.is_simt_mode = False
         self.simt_stack_limit = 8192
         self.user_specified_warps = None
+        self.user_specified_num_stages = None
         self.user_specified_multibuffer = None
-        self.default_multibuffer = not is_compile_on_910_95
         self.print_autotuning = os.getenv("TRITON_PRINT_AUTOTUNING", None) == "1"
         # Compile kernels in parallel by default for triton.runtime.JITFunction,
         # but not for others, e.g., LibEntry, since it's not compatible with AsyncCompileMode
@@ -143,29 +320,31 @@ class AutoTilingTuner(Autotuner):
             print(f"Triton autotuning: Expanded to {len(simt_configs)} SIMT configs (with warps: {cand_num_warps})")
         return simt_configs
 
-    def _expand_simd_multibuffer_configs(self, base_configs: List[Config]) -> List[Config]:
+    def _get_non_simt_num_stages_candidates(self) -> List[int]:
+        if self.user_specified_num_stages is not None:
+            return [self.user_specified_num_stages]
         if self.user_specified_multibuffer is not None:
-            if self.print_autotuning:
-                print(
-                    "Triton autotuning: Skip SIMD multibuffer expansion because user "
-                    f"specified multibuffer={self.user_specified_multibuffer}"
-                )
-            return base_configs
+            return [_multibuffer_to_num_stages(self.user_specified_multibuffer)]
+        return list(_DEFAULT_HINT_NUM_STAGES)
 
-        opposite_default_multibuffer = not self.default_multibuffer
-        simd_configs = []
+    def _expand_num_stages_configs(self, base_configs: List[Config], num_stages_candidates: List[int]) -> List[Config]:
+        expanded_configs = []
         for base_cfg in base_configs:
-            simd_configs.append(base_cfg)
-            new_cfg = copy.deepcopy(base_cfg)
-            new_cfg.kwargs["multibuffer"] = opposite_default_multibuffer
-            simd_configs.append(new_cfg)
+            for num_stages in num_stages_candidates:
+                expanded_configs.append(
+                    _clone_config_with_kwargs(
+                        base_cfg,
+                        base_cfg.kwargs.copy(),
+                        num_stages=num_stages,
+                    )
+                )
 
         if self.print_autotuning:
             print(
                 "Triton autotuning: Expanded to "
-                f"{len(simd_configs)} SIMD configs (toggle multibuffer={opposite_default_multibuffer})"
+                f"{len(expanded_configs)} configs (with num_stages: {num_stages_candidates})"
             )
-        return simd_configs
+        return expanded_configs
 
     def _init_axis_params(self, key, split_params, tiling_params, low_dim_axes, reduction_axes):
         if isinstance(key, list):
@@ -340,7 +519,10 @@ class AutoTilingTuner(Autotuner):
         if self.is_simt_mode:
             self.gen_configs = self._expand_simt_num_warps_configs(self.gen_configs)
         else:
-            self.gen_configs = self._expand_simd_multibuffer_configs(self.gen_configs)
+            self.gen_configs = self._expand_num_stages_configs(
+                self.gen_configs,
+                self._get_non_simt_num_stages_candidates(),
+            )
 
         if len(self.gen_configs) == 0:
             print(
@@ -357,6 +539,10 @@ class AutoTilingTuner(Autotuner):
             self.user_specified_warps = kwargs['num_warps']
         else:
             self.user_specified_warps = None
+        if 'num_stages' in kwargs and kwargs['num_stages'] is not None:
+            self.user_specified_num_stages = kwargs['num_stages']
+        else:
+            self.user_specified_num_stages = None
         if 'multibuffer' in kwargs and kwargs['multibuffer'] is not None:
             self.user_specified_multibuffer = kwargs['multibuffer']
         else:
@@ -496,17 +682,19 @@ class AutoTilingTuner(Autotuner):
 
         if len(run_fns) == 1:
             # we ignore expensive profiling method when only single config is left
-            return {config: self.do_bench(fn) for config, fn in run_fns.items()}
+            return {config: self.do_bench(fn, quantiles=(0.5, 0.2, 0.8)) for config, fn in run_fns.items()}
 
         use_profiling = os.getenv("TRITON_BENCH_METHOD", "default").lower() == "npu"
-        if use_profiling:
+        # Respect user-provided benchmarkers even when NPU profiling mode is enabled.
+        use_npu_profiling = use_profiling and not self.user_defined_do_bench
+        if use_npu_profiling:
             from ..testing import do_bench_npu
 
             time_cost = do_bench_npu(list(run_fns.values()), clear_l2_cache=False)
             assert len(time_cost) == len(run_fns)
             return {config: cost for config, cost in zip(run_fns.keys(), time_cost)}
         else:
-            return {config: self.do_bench(fn) for config, fn in run_fns.items()}
+            return {config: self.do_bench(fn, quantiles=(0.5, 0.2, 0.8)) for config, fn in run_fns.items()}
 
     def _make_kernel_call(self, *args, config, **meta):
         # check for conflicts, i.e. meta-parameters both provided
@@ -617,29 +805,7 @@ class AutoTilingTuner(Autotuner):
         return self.axis_pid_dims
 
     def _get_constexpr_candidates(self) -> List[str]:
-        """
-        Returns all constexpr parameter names from the kernel function definition.
-        """
-        func_ast = self.fn.parse()
-        constexpr_names = []
-        for node in ast.walk(func_ast):
-            if not isinstance(node, ast.FunctionDef):
-                continue
-            if not isinstance(node.args, ast.arguments):
-                continue
-            for arg in node.args.args:
-                if not isinstance(arg, ast.arg):
-                    continue
-                ann = arg.annotation
-                if (
-                    isinstance(ann, ast.Attribute)
-                    and isinstance(ann.value, ast.Name)
-                    and ann.value.id == "tl"
-                    and ann.attr == "constexpr"
-                ):
-                    constexpr_names.append(arg.arg)
-            break
-        return constexpr_names
+        return _get_constexpr_candidates_from_fn(self.fn)
 
     def _get_fixed_grid_dim_values(self, grid, all_args: Dict[str, object] = None) -> Dict[int, int]:
         """

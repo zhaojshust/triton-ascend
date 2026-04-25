@@ -29,8 +29,8 @@
 
 namespace mlir {
 namespace triton {
-class AddControlFlowConditionPass : public PassWrapper<AddControlFlowConditionPass, OperationPass<ModuleOp>> {
-  public:
+class AddControlFlowConditionPass : public PassWrapper<AddControlFlowConditionPass, OperationPass<ModuleOp> > {
+public:
     // Constructor
     AddControlFlowConditionPass() = default;
 
@@ -39,7 +39,7 @@ class AddControlFlowConditionPass : public PassWrapper<AddControlFlowConditionPa
 };
 
 // Create the pass
-std::unique_ptr<OperationPass<ModuleOp>> createAddControlFlowConditionPass();
+std::unique_ptr<OperationPass<ModuleOp> > createAddControlFlowConditionPass();
 
 } // namespace triton
 } // namespace mlir

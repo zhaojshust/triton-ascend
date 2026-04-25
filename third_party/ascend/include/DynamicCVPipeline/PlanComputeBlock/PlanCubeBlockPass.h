@@ -20,29 +20,27 @@
  * THE SOFTWARE.
  */
 
-#ifndef TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_PLAN_COMPUTE_BLOCK_COMMON_H
-#define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_PLAN_COMPUTE_BLOCK_COMMON_H
+#ifndef TRITION_ADAPTER_DYNAMIC_CV_PIPELINE_PLAN_COMPUTE_BLOCK_PLAN_CUBE_BLOCK_PASS_H
+#define TRITION_ADAPTER_DYNAMIC_CV_PIPELINE_PLAN_COMPUTE_BLOCK_PLAN_CUBE_BLOCK_PASS_H
 
-#include "ascend/include/DynamicCVPipeline/PlanComputeBlock/ComputeBlockIdManager.h"
-#include "DynamicCVPipeline/Common/MemoryEffectsTracker.h"
-#include "DynamicCVPipeline/Common/Utils.h"
-#include "mlir/IR/Block.h"
-#include "mlir/IR/Operation.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallVector.h"
+#include <memory>
+
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/Pass/Pass.h"
 
 namespace mlir {
-namespace CVPipeline {
+namespace triton {
 
-inline bool isCubeOp(Operation *op)
-{
-    return getOpCoreType(op) == CoreType::CUBE_ONLY;
-}
-Operation *getAncestorInBlock(Operation *inner, Block *block);
-void initializeIndegreeForBlock(Block *block, llvm::DenseMap<Operation *, int> &indegree,
-                                const MemoryDependenceGraph &memGraph);
+class PlanCubeBlockPass : public PassWrapper<PlanCubeBlockPass, OperationPass<ModuleOp>> {
+public:
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PlanCubeBlockPass);
 
-} // namespace CVPipeline
+    PlanCubeBlockPass() = default;
+    void runOnOperation() override;
+};
+
+std::unique_ptr<OperationPass<ModuleOp>> createPlanCubeBlockPass();
+} // namespace triton
 } // namespace mlir
 
-#endif // TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_PLAN_COMPUTE_BLOCK_COMMON_H
+#endif // TRITION_ADAPTER_DYNAMIC_CV_PIPELINE_PLAN_COMPUTE_BLOCK_PLAN_CUBE_BLOCK_PASS_H

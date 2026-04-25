@@ -20,12 +20,15 @@
  * THE SOFTWARE.
  */
 
+#include <string_view>
 #include <utility>
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/iterator.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -44,6 +47,7 @@
 #include "DynamicCVPipeline/Common/Utils.h"
 #include "DynamicCVPipeline/PlanComputeBlock/ComputeBlockIdManager.h"
 #include "TritonToUnstructure/OffsetAnalysis.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 
 using namespace mlir;
 static constexpr const char *DEBUG_TYPE = "ReorderOpsByBlockIdPass";
@@ -56,6 +60,7 @@ namespace {
 
 // A dependency DAG of both SSA and memory of the ops
 struct BlockOpGraph {
+    Block *block;
     ArrayRef<Operation *> ops;
     DenseMap<Operation *, unsigned> opIndex;               // op → position in ops
     DenseMap<Operation *, SmallVector<Operation *>> preds; // op → its defs
@@ -113,7 +118,7 @@ template <bool IsMemory> void EdgeHelper::addEdge(Operation *pred, Operation *su
 };
 
 BlockOpGraph::BlockOpGraph(ArrayRef<Operation *> allOps, Block *block, const MemoryDependenceGraph &memGraph)
-    : ops(allOps)
+    : block(block), ops(allOps)
 {
     for (unsigned i = 0; i < allOps.size(); ++i) {
         opIndex[allOps[i]] = i;
@@ -172,9 +177,12 @@ namespace {
 
 // Helper structure to hold the group-level graph data.
 struct GroupAdjacencyGraph {
+    Block *block;
     SmallVector<int> groupIds;
     SmallVector<SmallVector<unsigned>> succs;
     SmallVector<unsigned> inDeg;
+    GroupAdjacencyGraph(const BlockOpGraph &g, const DenseMap<Operation *, int> &opBlockId);
+    llvm::FailureOr<SmallVector<int>> computeTopologicalOrder();
 };
 
 } // namespace
@@ -184,27 +192,26 @@ struct GroupAdjacencyGraph {
  * Maps individual operations to their respective groups and identifies
  * dependencies between those groups.
  */
-static GroupAdjacencyGraph buildGroupAdjacency(const BlockOpGraph &g, const DenseMap<Operation *, int> &opBlockId)
+GroupAdjacencyGraph::GroupAdjacencyGraph(const BlockOpGraph &g, const DenseMap<Operation *, int> &opBlockId)
+    : block(g.block)
 {
-    GroupAdjacencyGraph graph;
-
     // 1. Collect distinct group IDs while preserving the first-appearance order.
     DenseSet<int> seenIds;
     for (Operation *op : g.ops) {
         int id = opBlockId.at(op);
         if (seenIds.insert(id).second) {
-            graph.groupIds.push_back(id);
+            groupIds.push_back(id);
         }
     }
 
-    unsigned n = graph.groupIds.size();
-    graph.succs.resize(n);
-    graph.inDeg.assign(n, 0);
+    unsigned n = groupIds.size();
+    succs.resize(n);
+    inDeg.assign(n, 0);
 
     // Map group ID to its index in the groupIds vector for fast lookup.
     DenseMap<int, unsigned> groupPos;
     for (unsigned i = 0; i < n; ++i) {
-        groupPos[graph.groupIds[i]] = i;
+        groupPos[groupIds[i]] = i;
     }
 
     // 2. Build group-level edges. Use a set to avoid duplicate edges between groups.
@@ -216,8 +223,8 @@ static GroupAdjacencyGraph buildGroupAdjacency(const BlockOpGraph &g, const Dens
             unsigned toIdx = groupPos[opBlockId.at(succ)];
             // Ignore intra-group dependencies and duplicate inter-group edges.
             if (fromIdx != toIdx && addedEdges.insert({fromIdx, toIdx}).second) {
-                graph.succs[fromIdx].push_back(toIdx);
-                graph.inDeg[toIdx]++;
+                succs[fromIdx].push_back(toIdx);
+                inDeg[toIdx]++;
             }
         }
     }
@@ -225,28 +232,26 @@ static GroupAdjacencyGraph buildGroupAdjacency(const BlockOpGraph &g, const Dens
     // Logging the constructed group graph.
     LOG_DEBUG("Group-level edges:\n");
     for (unsigned i = 0; i < n; ++i) {
-        LOG_DEBUG("  Group " << graph.groupIds[i] << " -> ");
-        for (unsigned succIdx : graph.succs[i]) {
-            LOG_DEBUG(graph.groupIds[succIdx] << " ");
+        LOG_DEBUG("  Group " << groupIds[i] << " -> ");
+        for (unsigned succIdx : succs[i]) {
+            LOG_DEBUG(groupIds[succIdx] << " ");
         }
         LOG_DEBUG("\n");
     }
-
-    return graph;
 }
 
 /**
  * Step 2: Perform a topological sort (Kahn's Algorithm) on the group graph.
  * Returns the group IDs in an order that satisfies all dependencies.
  */
-static SmallVector<int> computeTopologicalOrder(GroupAdjacencyGraph &graph)
+llvm::FailureOr<SmallVector<int>> GroupAdjacencyGraph::computeTopologicalOrder()
 {
     SmallVector<int> result;
     SmallVector<unsigned> ready; // Nodes with in-degree 0.
-    unsigned n = graph.groupIds.size();
+    unsigned n = groupIds.size();
 
     for (unsigned i = 0; i < n; ++i) {
-        if (graph.inDeg[i] == 0) {
+        if (inDeg[i] == 0) {
             ready.push_back(i);
         }
     }
@@ -254,10 +259,10 @@ static SmallVector<int> computeTopologicalOrder(GroupAdjacencyGraph &graph)
     while (!ready.empty()) {
         auto cur = ready.pop_back_val();
 
-        result.push_back(graph.groupIds[cur]);
+        result.push_back(groupIds[cur]);
 
-        for (unsigned succIdx : graph.succs[cur]) {
-            if (--graph.inDeg[succIdx] == 0) {
+        for (unsigned succIdx : succs[cur]) {
+            if (--inDeg[succIdx] == 0) {
                 ready.push_back(succIdx);
             }
         }
@@ -269,29 +274,40 @@ static SmallVector<int> computeTopologicalOrder(GroupAdjacencyGraph &graph)
     }
     LOG_DEBUG("\n");
 
-    return result;
-}
-
-/**
- * Main entry point to build the group order.
- */
-static SmallVector<int> buildGroupOrder(const BlockOpGraph &g, const DenseMap<Operation *, int> &opBlockId)
-{
-    // 1. Construct the graph
-    GroupAdjacencyGraph graph = buildGroupAdjacency(g, opBlockId);
-
-    // 2. Sort the graph
-    return computeTopologicalOrder(graph);
+    if (result.size() == n) {
+        return result;
+    }
+    Operation *op = block->getParentOp();
+    constexpr std::string_view kErrorPrefix = "Failed to compute topological order for ";
+    if (!op) {
+        llvm::errs() << kErrorPrefix << "an unknown block that is not contained in an op";
+        return llvm::failure();
+    }
+    size_t regionIdx = 0;
+    bool found = false;
+    for (auto [i, region] : llvm::enumerate(op->getRegions())) {
+        for (auto &possibleBlock : region.getBlocks()) {
+            if (&possibleBlock == block) {
+                regionIdx = i;
+            }
+        }
+    }
+    op->emitError(kErrorPrefix) << "block in region " << regionIdx;
+    return llvm::failure();
 }
 
 // Stable sort ops based on their group orders
-static SmallVector<Operation *> buildReorderedOps(const BlockOpGraph &graph,
-                                                  const DenseMap<Operation *, int> &opBlockId)
+static llvm::FailureOr<SmallVector<Operation *>> buildReorderedOps(const BlockOpGraph &graph,
+                                                                   const DenseMap<Operation *, int> &opBlockId)
 {
     SmallVector<Operation *> reordered;
-    SmallVector<int> const groupOrder = buildGroupOrder(graph, opBlockId);
+    GroupAdjacencyGraph adjacencyGraph {graph, opBlockId};
+    auto groupOrderResult = adjacencyGraph.computeTopologicalOrder();
+    if (llvm::failed(groupOrderResult)) {
+        return llvm::failure();
+    }
 
-    for (int const blockId : groupOrder) {
+    for (int const blockId : groupOrderResult.value()) {
         for (Operation *op : graph.ops) {
             if (opBlockId.at(op) == blockId) {
                 reordered.push_back(op);
@@ -316,20 +332,26 @@ static void applyReorder(Block &block, ArrayRef<Operation *> reordered)
 
 static llvm::LogicalResult reorderOpsInBlock(Block &block, const MemoryDependenceGraph &memGraph)
 {
-    auto allOps = llvm::to_vector(llvm::make_pointer_range(block.without_terminator()));
+    const auto allOps = llvm::to_vector(llvm::make_pointer_range(block.without_terminator()));
 
     const BlockOpGraph graph {allOps, &block, memGraph};
     llvm::FailureOr<DenseMap<Operation *, int>> opBlockIdOpt = collectBlockIds(allOps);
     if (failed(opBlockIdOpt)) {
         return failure();
     }
+
     auto &opBlockId = *opBlockIdOpt;
     LOG_DEBUG("Initial opBlockIds:\n");
     for (Operation *op : allOps) {
         LOG_DEBUG("  Op: " << *op << ", opBlockId = " << opBlockId[op] << "\n");
     }
-    SmallVector<Operation *> const reordered = buildReorderedOps(graph, opBlockId);
-    applyReorder(block, reordered);
+
+    const auto reorderedRes = buildReorderedOps(graph, opBlockId);
+    if (failed(reorderedRes)) {
+        return failure();
+    }
+
+    applyReorder(block, reorderedRes.value());
 
     return llvm::success();
 }

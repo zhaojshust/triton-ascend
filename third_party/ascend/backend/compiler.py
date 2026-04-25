@@ -531,6 +531,12 @@ def linalg_to_bin_enable_npu_compile_A2_A3(linalg: str, metadata, opt):
                 f"--enable-ubuf-saving={enable_ubuf_saving}",
             ]
 
+        enable_preload = metadata["enable_preload"]
+        if enable_preload is not None:
+            _compile_option_list += [
+                f"--enable-preload={enable_preload}",
+            ]
+
         _compile_option_list += [
             f"--enable-auto-bind-sub-block={get_auto_bind_sub_block_option(metadata)}",
         ]
@@ -736,6 +742,7 @@ class NPUOptions:
 
     multibuffer: bool = not is_compile_on_910_95
     enable_ubuf_saving: bool = None
+    enable_preload: bool = None
     enable_auto_bind_sub_block: bool = None
     disable_tightly_coupled_buffer_reuse: bool = False
     enable_select_analysis: bool = True

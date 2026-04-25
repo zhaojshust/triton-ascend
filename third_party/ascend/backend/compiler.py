@@ -309,10 +309,17 @@ def linalg_to_bin_enable_npu_compile_910_95(linalg: str, metadata, opt):
         callback_path = os.path.join(tmpdir, "libkernel.so")
         _compile_option_list = get_common_bishengir_compile_options(metadata)
 
-        multibuffer = metadata["multibuffer"]
-        if multibuffer is not None:
+        multibuffer = metadata.get("multibuffer")
+        num_stages = metadata.get("num_stages")
+
+        if multibuffer is not None or num_stages is not None:
+            multi_buffer_value = True
+            if multibuffer is not None and not multibuffer:
+                multi_buffer_value = False
+            elif num_stages is not None and num_stages == 1:
+                multi_buffer_value = False
             _compile_option_list += [
-                f"--enable-auto-multi-buffer={multibuffer}",
+                f"--enable-auto-multi-buffer={multi_buffer_value}",
             ]
 
         disable_tightly_coupled_buffer_reuse = metadata["disable_tightly_coupled_buffer_reuse"]
@@ -525,11 +532,16 @@ def linalg_to_bin_enable_npu_compile_A2_A3(linalg: str, metadata, opt):
             f"--target={NPUUtils().get_arch()}",
         ]
 
-        multibuffer = metadata["multibuffer"]
-        if multibuffer is not None:
-            _compile_option_list += [
-                f"--enable-auto-multi-buffer={multibuffer}",
-            ]
+        multibuffer = metadata.get("multibuffer")
+        num_stages = metadata.get("num_stages")
+
+        if multibuffer is not None or num_stages is not None:
+            multi_buffer_value = True
+            if multibuffer is not None and not multibuffer:
+                multi_buffer_value = False
+            elif num_stages is not None and num_stages == 1:
+                multi_buffer_value = False
+            _compile_option_list.append(f"--enable-auto-multi-buffer={multi_buffer_value}")
 
         enable_ubuf_saving = metadata["enable_ubuf_saving"]
         if enable_ubuf_saving is not None:
@@ -712,7 +724,7 @@ class NPUOptions:
     cluster_dims: tuple = (1, 1, 1)
     num_warps: int = 32
     num_ctas: int = 1
-    num_stages: int = 1
+    num_stages: int = 1 if is_compile_on_910_95 else 2
     warp_size: int = 32
     num_buffers_warp_spec: int = 0
     num_consumer_groups: int = 0

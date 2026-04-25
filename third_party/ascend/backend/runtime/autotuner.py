@@ -29,7 +29,8 @@ import ast
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List
+import itertools
+from typing import Dict, List, Optional
 
 from torch import Tensor
 
@@ -39,6 +40,149 @@ from triton.runtime.autotuner import Autotuner, Config
 from .autoparser import (LowDimsAxesParser, PtrNumsParser, ReductionAxesParser,
                          SplitAxesParser, TilingAxesParser)
 from .utils import get_byte_per_numel, is_valid_axis_name, valid_axis_names
+
+_RESERVED_HINT_KEYS = {
+    "split_params",
+    "tiling_params",
+    "low_dim_axes",
+    "reduction_axes",
+    "auto_gen_config",
+}
+_MULTIBUFFER_HINT_KEY = "multibuffer"
+_DEFAULT_HINT_NUM_STAGES = [1, 2]
+
+
+def _get_constexpr_candidates_from_fn(fn) -> List[str]:
+    """
+    Returns all constexpr parameter names from the kernel function definition.
+    """
+    func_ast = fn.parse()
+    constexpr_names = []
+    for node in ast.walk(func_ast):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if not isinstance(node.args, ast.arguments):
+            continue
+        for arg in node.args.args:
+            if not isinstance(arg, ast.arg):
+                continue
+            ann = arg.annotation
+            if (
+                isinstance(ann, ast.Attribute)
+                and isinstance(ann.value, ast.Name)
+                and ann.value.id == "tl"
+                and ann.attr == "constexpr"
+            ):
+                constexpr_names.append(arg.arg)
+        break
+    return constexpr_names
+
+
+def _clone_config_with_kwargs(config: Config, kwargs: Dict[str, object], num_stages: Optional[int] = None) -> Config:
+    return Config(
+        kwargs=kwargs,
+        num_warps=config.num_warps,
+        num_stages=config.num_stages if num_stages is None else num_stages,
+        num_ctas=config.num_ctas,
+        num_buffers_warp_spec=config.num_buffers_warp_spec,
+        num_consumer_groups=config.num_consumer_groups,
+        reg_dec_producer=config.reg_dec_producer,
+        reg_inc_consumer=config.reg_inc_consumer,
+        maxnreg=config.maxnreg,
+        pre_hook=config.pre_hook,
+    )
+
+
+def _split_hints(hints: Optional[Dict[str, object]]):
+    hints = {} if hints is None else dict(hints)
+    reserved_hints = {k: v for k, v in hints.items() if k in _RESERVED_HINT_KEYS}
+    config_hints = {k: v for k, v in hints.items() if k not in _RESERVED_HINT_KEYS}
+    return reserved_hints, config_hints
+
+
+def _multibuffer_to_num_stages(multibuffer: bool) -> int:
+    if not isinstance(multibuffer, bool):
+        raise ValueError(
+            "multibuffer must be a boolean when mapped to num_stages. "
+            f"Got: {type(multibuffer)}"
+        )
+    return 2 if multibuffer else 1
+
+
+def _normalize_config_hints(config_hints: Optional[Dict[str, object]], inject_default_num_stages: bool = False):
+    normalized_hints = {} if config_hints is None else dict(config_hints)
+    has_explicit_num_stages = "num_stages" in normalized_hints
+
+    multibuffer_values = normalized_hints.pop(_MULTIBUFFER_HINT_KEY, None)
+    if multibuffer_values is not None:
+        if not isinstance(multibuffer_values, (list, tuple)) or len(multibuffer_values) == 0:
+            raise ValueError(
+                f"hints['{_MULTIBUFFER_HINT_KEY}'] must be a non-empty list/tuple when used for config expansion."
+            )
+        if not all(isinstance(value, bool) for value in multibuffer_values):
+            raise ValueError(
+                f"hints['{_MULTIBUFFER_HINT_KEY}'] must contain only boolean values."
+            )
+        if not has_explicit_num_stages:
+            normalized_hints["num_stages"] = [
+                _multibuffer_to_num_stages(value) for value in multibuffer_values
+            ]
+
+    if inject_default_num_stages and "num_stages" not in normalized_hints:
+        normalized_hints["num_stages"] = list(_DEFAULT_HINT_NUM_STAGES)
+
+    return normalized_hints
+
+
+def _validate_config_hint_values(config_hints: Dict[str, object], constexpr_names: List[str]):
+    invalid_keys = sorted(
+        key for key in config_hints
+        if key not in constexpr_names and key not in _ALL_PARAMS
+    )
+    if invalid_keys:
+        raise ValueError(
+            "Invalid hints keys for config expansion: {}. "
+            "Keys must be tl.constexpr kernel parameters or supported compile options.".format(invalid_keys)
+        )
+
+    for key, value in config_hints.items():
+        if not isinstance(value, (list, tuple)) or len(value) == 0:
+            raise ValueError(
+                f"hints['{key}'] must be a non-empty list/tuple when used for config expansion."
+            )
+        if key in _VALIDATION_RULES:
+            rule = _VALIDATION_RULES[key]
+            if not rule["check"](value, key):
+                raise ValueError(f"Invalid value for '{key}': {value}. Expected: {rule['desc']}")
+
+
+def _expand_configs_with_hints(fn, configs, config_hints: Dict[str, object]):
+    if not config_hints:
+        return configs
+
+    if not configs:
+        raise ValueError(
+            "Config expansion hints require explicit configs. "
+            "Use 'configs' together with expansion keys in 'hints'."
+        )
+
+    constexpr_names = _get_constexpr_candidates_from_fn(fn)
+    _validate_config_hint_values(config_hints, constexpr_names)
+
+    keys = list(config_hints.keys())
+    values = [config_hints[key] for key in keys]
+    expanded_configs = []
+    for config in configs:
+        for combo in itertools.product(*values):
+            new_kwargs = config.kwargs.copy()
+            num_stages = config.num_stages
+            for key, value in zip(keys, combo):
+                if key == "num_stages":
+                    num_stages = value
+                else:
+                    new_kwargs[key] = value
+            expanded_configs.append(_clone_config_with_kwargs(config, new_kwargs, num_stages))
+    return expanded_configs
 
 
 class AutoTilingTuner(Autotuner):
@@ -71,6 +215,13 @@ class AutoTilingTuner(Autotuner):
             Only the axis name in this param should add perfix 'r' if it's a reduction axis.
         :type key: List[str]
         """
+        reserved_hints, config_hints = _split_hints(hints)
+        config_hints = _normalize_config_hints(
+            config_hints,
+            inject_default_num_stages=bool(configs) and bool(config_hints),
+        )
+        configs = _expand_configs_with_hints(fn, configs, config_hints)
+
         super().__init__(
             fn,
             arg_names,
@@ -86,10 +237,38 @@ class AutoTilingTuner(Autotuner):
             use_cuda_graph,
             do_bench,
         )
-        if not hints:
-            self.hints = {}
-        else:
-            self.hints = hints
+        self.user_defined_do_bench = do_bench is not None
+        # -- reserved_hints (self.hints) vs config_hints (self.config_hints) --
+        # The `hints` dict passed to @triton.autotune is split into two parts by _split_hints():
+        #
+        #   1. reserved_hints (stored in self.hints):
+        #      Keys in _RESERVED_HINT_KEYS = {split_params, tiling_params, low_dim_axes,
+        #      reduction_axes, auto_gen_config}.  These are axis-parsing hints that control
+        #      how TileGenerator derives tiling configs.  They are NOT used for config
+        #      expansion and are passed unchanged to _init_axis_params().
+        #
+        #   2. config_hints (stored in self.config_hints after normalization):
+        #      Keys NOT in _RESERVED_HINT_KEYS (e.g. BLOCK_THRESHOLD, num_stages, a, …).
+        #      Each non-reserved key whose value is a non-empty list/tuple is treated as a
+        #      config expansion hint.  _expand_configs_with_hints() forms a Cartesian product
+        #      between those list values and the explicit configs list, cloning a Config for
+        #      every combination.  Keys that are compile options (e.g. num_stages) write to
+        #      Config.num_stages; all other keys write to Config.kwargs as kernel tl.constexpr
+        #      arguments.  The compatibility alias `multibuffer` is normalized to
+        #      `num_stages` (`True -> 2`, `False -> 1`), and if any config-expansion hints
+        #      are provided without an explicit `num_stages`, the default candidates
+        #      `num_stages=[1, 2]` are injected.
+        #
+        # Example – given hints={"BLOCK_THRESHOLD": [8, 16], "num_stages": [1, 2],
+        #            "split_params": "rstd"}:
+        #   - self.hints       = {"split_params": "rstd"}        (reserved, axis-parsing only)
+        #   - self.config_hints = {"BLOCK_THRESHOLD": [8, 16],  # expands explicit configs
+        #                          "num_stages": [1, 2]}        # via Cartesian product
+        #
+        # Mixing: reserved and config-expansion keys can coexist in the original hints dict;
+        # _split_hints() separates them so that each serves its own purpose without conflict.
+        self.hints = reserved_hints
+        self.config_hints = config_hints
         split_params = self.hints.get("split_params", None)
         tiling_params = self.hints.get("tiling_params", None)
         low_dim_axes = self.hints.get("low_dim_axes", None)
@@ -112,6 +291,8 @@ class AutoTilingTuner(Autotuner):
         self.is_simt_mode = False
         self.simt_stack_limit = 8192
         self.user_specified_warps = None
+        self.user_specified_num_stages = None
+        self.user_specified_multibuffer = None
         self.print_autotuning = os.getenv("TRITON_PRINT_AUTOTUNING", None) == "1"
         # Compile kernels in parallel by default for triton.runtime.JITFunction,
         # but not for others, e.g., LibEntry, since it's not compatible with AsyncCompileMode
@@ -119,6 +300,51 @@ class AutoTilingTuner(Autotuner):
             isinstance(self.fn, triton.runtime.JITFunction)
             and os.getenv("TRITON_AUTOTUNE_PARALLEL_COMPILE", "1") == "1"
         )
+
+    def _expand_simt_num_warps_configs(self, base_configs: List[Config]) -> List[Config]:
+        _default_cand_num_warps = [8, 16, 32, 64]
+        cand_num_warps = (
+            _default_cand_num_warps
+            if self.user_specified_warps is None
+            else [self.user_specified_warps]
+        )
+
+        simt_configs = []
+        for base_cfg in base_configs:
+            for num_warps in cand_num_warps:
+                new_cfg = copy.deepcopy(base_cfg)
+                new_cfg.num_warps = num_warps
+                simt_configs.append(new_cfg)
+
+        if self.print_autotuning:
+            print(f"Triton autotuning: Expanded to {len(simt_configs)} SIMT configs (with warps: {cand_num_warps})")
+        return simt_configs
+
+    def _get_non_simt_num_stages_candidates(self) -> List[int]:
+        if self.user_specified_num_stages is not None:
+            return [self.user_specified_num_stages]
+        if self.user_specified_multibuffer is not None:
+            return [_multibuffer_to_num_stages(self.user_specified_multibuffer)]
+        return list(_DEFAULT_HINT_NUM_STAGES)
+
+    def _expand_num_stages_configs(self, base_configs: List[Config], num_stages_candidates: List[int]) -> List[Config]:
+        expanded_configs = []
+        for base_cfg in base_configs:
+            for num_stages in num_stages_candidates:
+                expanded_configs.append(
+                    _clone_config_with_kwargs(
+                        base_cfg,
+                        base_cfg.kwargs.copy(),
+                        num_stages=num_stages,
+                    )
+                )
+
+        if self.print_autotuning:
+            print(
+                "Triton autotuning: Expanded to "
+                f"{len(expanded_configs)} configs (with num_stages: {num_stages_candidates})"
+            )
+        return expanded_configs
 
     def _init_axis_params(self, key, split_params, tiling_params, low_dim_axes, reduction_axes):
         if isinstance(key, list):
@@ -193,10 +419,13 @@ class AutoTilingTuner(Autotuner):
         if not self.low_dim_axes:
             self.low_dim_axes = self._autoparse_low_dim_axes()
 
-        if len(self.reduction_axes) == 1 and \
-            self.reduction_axes[0] == self.low_dim_axes[0] and \
-            all_args.get(self.keys[self.reduction_axes[0]], float("inf")) < 1024:
-            self.persistent_reduction = True
+        if len(self.reduction_axes) == 1:
+            reduction_axis = self.reduction_axes[0]
+            reduction_param = self.keys.get(reduction_axis, None)
+            reduction_numel = all_args.get(reduction_param, float("inf"))
+            persistent_threshold = self._get_persistent_reduction_threshold(reduction_axis)
+            if reduction_numel <= persistent_threshold:
+                self.persistent_reduction = True
 
         if not self.split_params:
             all_split_params = self._autoparse_split_params(
@@ -288,23 +517,12 @@ class AutoTilingTuner(Autotuner):
         self.gen_configs = tile_gen.configs
 
         if self.is_simt_mode:
-            _default_cand_num_warps = [8, 16, 32, 64]
-            cand_num_warps = (
-                _default_cand_num_warps
-                if self.user_specified_warps is None
-                else [self.user_specified_warps]
+            self.gen_configs = self._expand_simt_num_warps_configs(self.gen_configs)
+        else:
+            self.gen_configs = self._expand_num_stages_configs(
+                self.gen_configs,
+                self._get_non_simt_num_stages_candidates(),
             )
-            simt_configs = []
-            for base_cfg in self.gen_configs:
-                for num_warps in cand_num_warps:
-                    new_cfg = copy.deepcopy(base_cfg)
-                    new_cfg.num_warps = num_warps
-                    simt_configs.append(new_cfg)
-            
-            if self.print_autotuning:
-                print(f"Triton autotuning: Expanded to {len(simt_configs)} SIMT configs (with warps: {cand_num_warps})")
-            
-            self.gen_configs = simt_configs
 
         if len(self.gen_configs) == 0:
             print(
@@ -319,6 +537,16 @@ class AutoTilingTuner(Autotuner):
         self.is_simt_mode = kwargs.get('force_simt_only', False)
         if 'num_warps' in kwargs and kwargs['num_warps'] is not None:
             self.user_specified_warps = kwargs['num_warps']
+        else:
+            self.user_specified_warps = None
+        if 'num_stages' in kwargs and kwargs['num_stages'] is not None:
+            self.user_specified_num_stages = kwargs['num_stages']
+        else:
+            self.user_specified_num_stages = None
+        if 'multibuffer' in kwargs and kwargs['multibuffer'] is not None:
+            self.user_specified_multibuffer = kwargs['multibuffer']
+        else:
+            self.user_specified_multibuffer = None
 
         # generate key
         all_args = {**self.nargs, **kwargs}
@@ -454,17 +682,19 @@ class AutoTilingTuner(Autotuner):
 
         if len(run_fns) == 1:
             # we ignore expensive profiling method when only single config is left
-            return {config: self.do_bench(fn) for config, fn in run_fns.items()}
+            return {config: self.do_bench(fn, quantiles=(0.5, 0.2, 0.8)) for config, fn in run_fns.items()}
 
         use_profiling = os.getenv("TRITON_BENCH_METHOD", "default").lower() == "npu"
-        if use_profiling:
+        # Respect user-provided benchmarkers even when NPU profiling mode is enabled.
+        use_npu_profiling = use_profiling and not self.user_defined_do_bench
+        if use_npu_profiling:
             from ..testing import do_bench_npu
 
             time_cost = do_bench_npu(list(run_fns.values()), clear_l2_cache=False)
             assert len(time_cost) == len(run_fns)
             return {config: cost for config, cost in zip(run_fns.keys(), time_cost)}
         else:
-            return {config: self.do_bench(fn) for config, fn in run_fns.items()}
+            return {config: self.do_bench(fn, quantiles=(0.5, 0.2, 0.8)) for config, fn in run_fns.items()}
 
     def _make_kernel_call(self, *args, config, **meta):
         # check for conflicts, i.e. meta-parameters both provided
@@ -575,29 +805,7 @@ class AutoTilingTuner(Autotuner):
         return self.axis_pid_dims
 
     def _get_constexpr_candidates(self) -> List[str]:
-        """
-        Returns all constexpr parameter names from the kernel function definition.
-        """
-        func_ast = self.fn.parse()
-        constexpr_names = []
-        for node in ast.walk(func_ast):
-            if not isinstance(node, ast.FunctionDef):
-                continue
-            if not isinstance(node.args, ast.arguments):
-                continue
-            for arg in node.args.args:
-                if not isinstance(arg, ast.arg):
-                    continue
-                ann = arg.annotation
-                if (
-                    isinstance(ann, ast.Attribute)
-                    and isinstance(ann.value, ast.Name)
-                    and ann.value.id == "tl"
-                    and ann.attr == "constexpr"
-                ):
-                    constexpr_names.append(arg.arg)
-            break
-        return constexpr_names
+        return _get_constexpr_candidates_from_fn(self.fn)
 
     def _get_fixed_grid_dim_values(self, grid, all_args: Dict[str, object] = None) -> Dict[int, int]:
         """
@@ -723,9 +931,9 @@ class AutoTilingTuner(Autotuner):
         parser = LowDimsAxesParser(func_ast, self.keys)
         low_dim_axes = parser.parse()
         if len(low_dim_axes) < 1:
-            raise ValueError(
-                f"Failed to parse low-dimensional axes."
-            )
+            if self.print_autotuning:
+                print("[WARNING] Failed to parse low-dimensional axes, fallback to empty low_dim_axes.")
+            return []
         if self.print_autotuning:
             print(
                 f"Ascend autotuning parse low dimensional axes: {low_dim_axes}"
@@ -748,6 +956,13 @@ class AutoTilingTuner(Autotuner):
                 f"Ascend autotuning parse pointer params: {ptr_params}, pointer nums: {ptr_nums}"
             )
         return ptr_nums
+
+    def _get_persistent_reduction_threshold(self, reduction_axis: str) -> int:
+        # Keep this heuristic aligned with inductor-style policy:
+        # inner reduction axis uses a larger threshold than other axes.
+        if self.low_dim_axes and reduction_axis == self.low_dim_axes[0]:
+            return 1024
+        return 64
 
 
 def autotune(configs, key, prune_configs_by=None, reset_to_zero=None, restore_value=None, pre_hook=None, post_hook=None,
@@ -816,4 +1031,366 @@ def autotune(configs, key, prune_configs_by=None, reset_to_zero=None, restore_va
                                post_hook=post_hook, prune_configs_by=prune_configs_by, warmup=warmup, rep=rep,
                                use_cuda_graph=use_cuda_graph, do_bench=do_bench, auto_profile_dir=auto_prof_dir, hints=hints)
 
+    return decorator
+
+
+_ALL_PARAMS = {
+    "num_stages", "unit_flag",
+    "limit_auto_multi_buffer_only_for_local_buffer",
+    "limit_auto_multi_buffer_of_local_buffer",
+    "set_workspace_multibuffer",
+    "enable_hivm_auto_cv_balance",
+    "tile_mix_vector_loop",
+    "tile_mix_cube_loop",
+    "enable_ubuf_saving",
+}
+
+_DEFAULTS = {
+    "num_stages": [2],
+    "unit_flag": [False],
+    "limit_auto_multi_buffer_only_for_local_buffer": [False],
+    "limit_auto_multi_buffer_of_local_buffer": ["no-l0c"],
+    "set_workspace_multibuffer": [2, 4],
+    "enable_hivm_auto_cv_balance": [True],
+    "tile_mix_vector_loop": [2, 4],
+    "tile_mix_cube_loop": [2, 4],
+    "enable_ubuf_saving": [True],
+}
+
+_VALID_VALUES = {
+    "num_stages": [1, 2],
+    "limit_auto_multi_buffer_of_local_buffer": ["no-limit", "no-l0c"],
+    "set_workspace_multibuffer": [2, 4],
+    "tile_mix_vector_loop": [2, 4, 8],
+    "tile_mix_cube_loop": [2, 4, 8],
+}
+
+_CUBE_PARAMS = {"num_stages", "unit_flag", "limit_auto_multi_buffer_of_local_buffer"}
+
+_MIXCV_PARAMS = {
+    "num_stages", "unit_flag",
+    "limit_auto_multi_buffer_only_for_local_buffer",
+    "limit_auto_multi_buffer_of_local_buffer",
+    "set_workspace_multibuffer",
+    "enable_hivm_auto_cv_balance",
+    "tile_mix_vector_loop",
+    "tile_mix_cube_loop",
+    "enable_ubuf_saving",
+}
+
+_VECTOR_PARAMS = {
+    "num_stages",
+    "enable_ubuf_saving",
+}
+
+
+def _check_boolean_list(val, param_name):
+    return isinstance(val, (list, tuple)) and len(val) > 0 and all(isinstance(x, bool) for x in val)
+
+
+def _check_string_in_set(val, valid_set, param_name):
+    return isinstance(val, (list, tuple)) and len(val) > 0 and all(v in valid_set for v in val)
+
+
+def _check_int_in_set(val, valid_set, param_name):
+    return isinstance(val, (list, tuple)) and len(val) > 0 and all(isinstance(v, int) and v in valid_set for v in val)
+
+
+_VALIDATION_RULES = {
+    "num_stages": {
+        "desc": f"must be one or more of: {_VALID_VALUES['num_stages']}",
+        "check": lambda val, p: _check_int_in_set(val, _VALID_VALUES['num_stages'], p)
+    },
+    "unit_flag": {
+        "desc": "must be non-empty list/tuple of boolean values",
+        "check": _check_boolean_list
+    },
+    "limit_auto_multi_buffer_only_for_local_buffer": {
+        "desc": "must be non-empty list/tuple of boolean values",
+        "check": _check_boolean_list
+    },
+    "limit_auto_multi_buffer_of_local_buffer": {
+        "desc": f"must be one or more of: {_VALID_VALUES['limit_auto_multi_buffer_of_local_buffer']}",
+        "check": lambda val, p: _check_string_in_set(val, _VALID_VALUES['limit_auto_multi_buffer_of_local_buffer'], p)
+    },
+    "set_workspace_multibuffer": {
+        "desc": f"must be one or more of: {_VALID_VALUES['set_workspace_multibuffer']}",
+        "check": lambda val, p: _check_int_in_set(val, _VALID_VALUES['set_workspace_multibuffer'], p)
+    },
+    "enable_hivm_auto_cv_balance": {
+        "desc": "must be non-empty list/tuple of boolean values",
+        "check": _check_boolean_list
+    },
+    "tile_mix_vector_loop": {
+        "desc": f"must be one or more of: {_VALID_VALUES['tile_mix_vector_loop']}",
+        "check": lambda val, p: _check_int_in_set(val, _VALID_VALUES['tile_mix_vector_loop'], p)
+    },
+    "tile_mix_cube_loop": {
+        "desc": f"must be one or more of: {_VALID_VALUES['tile_mix_cube_loop']}",
+        "check": lambda val, p: _check_int_in_set(val, _VALID_VALUES['tile_mix_cube_loop'], p)
+    },
+    "enable_ubuf_saving": {
+        "desc": "must be non-empty list/tuple of boolean values",
+        "check": _check_boolean_list
+    },
+}
+
+
+class BaseAutotuner:
+    """
+    Base class for generating auto-tuning configurations without block dimensions.
+    Users must provide fixed dimension parameters when calling the kernel.
+    """
+    def __init__(self, operator_name, supported_params, default_params, validation_rules):
+        self.operator_name = operator_name
+        self.supported_params = supported_params
+        self.default_params = default_params
+        self.validation_rules = validation_rules
+
+    def validate_parameters(self, **kwargs):
+        # Check for unsupported parameters
+        invalid_params = [k for k in kwargs.keys() if k not in _ALL_PARAMS]
+        if invalid_params:
+            print(f"[ERROR] Invalid parameters for {self.operator_name}: {invalid_params}")
+            return False
+
+        for param, rule in self.validation_rules.items():
+            if param in kwargs:
+                if not rule["check"](kwargs[param], param):
+                    print(f"[ERROR] Invalid value for '{param}' in {self.operator_name}: {kwargs[param]}")
+                    print(f"        Expected: {rule['desc']}")
+                    return False
+        return True
+
+    def get_configs(self, **kwargs):
+        """
+        Generate a list of Config objects.
+        Each parameter must be provided as a list (even for a single value).
+        The function produces the Cartesian product of all parameter lists.
+        - num_stages: each value will be set as Config.num_stages (not placed in kwargs)
+        - other parameters: each value will be placed in Config.kwargs
+        Returns a list of Config objects.
+        """
+        if not self.validate_parameters(**kwargs):
+            return []
+
+        # Collect parameter values, using defaults for missing ones
+        param_values = {}
+        for p in sorted(self.supported_params):
+            if p in kwargs:
+                param_values[p] = kwargs[p]
+            else:
+                param_values[p] = self.default_params.get(p, [None])
+
+        keys = list(param_values.keys())
+        values = list(param_values.values())
+        combos = list(itertools.product(*values))
+
+        configs = []
+        for combo in combos:
+            config_kwargs = {}
+            num_stages_val = None
+            for i, pname in enumerate(keys):
+                val = combo[i]
+                if pname == "num_stages":
+                    num_stages_val = val
+                else:
+                    config_kwargs[pname] = val
+
+            configs.append(Config(
+                kwargs=config_kwargs,
+                num_stages=num_stages_val if num_stages_val is not None else 2
+            ))
+        return configs
+
+
+CubeAutotuner = BaseAutotuner(
+    operator_name="cube",
+    supported_params=_CUBE_PARAMS,
+    default_params=_DEFAULTS,
+    validation_rules=_VALIDATION_RULES
+)
+
+MixcvAutotuner = BaseAutotuner(
+    operator_name="mixcv",
+    supported_params=_MIXCV_PARAMS,
+    default_params=_DEFAULTS,
+    validation_rules=_VALIDATION_RULES
+)
+
+VectorAutotuner = BaseAutotuner(
+    operator_name="vector",
+    supported_params=_VECTOR_PARAMS,
+    default_params=_DEFAULTS,
+    validation_rules=_VALIDATION_RULES
+)
+
+
+def get_autotune_cube_config(**kwargs: Any) -> List[triton.Config]:
+    """
+    Generate autotune configuration for the cube operator.
+    Supported parameters: num_stages, unit_flag, limit_auto_multi_buffer_of_local_buffer.
+    """
+    import triton
+    return CubeAutotuner.get_configs(**kwargs)
+
+
+def get_autotune_cv_config(**kwargs: Any) -> List[triton.Config]:
+    """
+    Generate autotune configuration for the mixcv operator.
+    Supported parameters: num_stages, unit_flag, limit_auto_multi_buffer_only_for_local_buffer,
+                limit_auto_multi_buffer_of_local_buffer, set_workspace_multibuffer,
+                enable_hivm_auto_cv_balance, tile_mix_vector_loop, tile_mix_cube_loop, enable_ubuf_saving
+    """
+    import triton
+    return MixcvAutotuner.get_configs(**kwargs)
+
+
+def get_autotune_vector_config(**kwargs: Any) -> List[triton.Config]:
+    """
+    Generate autotune configuration for the vector operator.
+    Supported parameters: num_stages, enable_ubuf_saving
+    """
+    import triton
+    return VectorAutotuner.get_configs(**kwargs)
+
+
+def get_max_configs(config, kernel_type="mixcv", **kwargs):
+    """
+    Expand a single base Config by combining it with tuning parameters.
+
+    :param config: A triton.Config object serving as the base.
+    :param kernel_type: Operator type, one of "cube", "mixcv", "vector". Default "mixcv".
+    :param kwargs: Tuning parameters, each provided as a list (e.g., enable_hivm_auto_cv_balance=[True, False]).
+                   If a parameter is not provided, its value is taken from the base config (if present)
+                   or from the defaults.
+    :return: List of expanded Config objects.
+    """
+    # Determine the set of parameters supported by the current kernel_type
+    if kernel_type == "cube":
+        supported = _CUBE_PARAMS
+    elif kernel_type == "vector":
+        supported = _VECTOR_PARAMS
+    else:
+        supported = _MIXCV_PARAMS
+
+    # Warn about unsupported parameters provided in kwargs
+    unsupported = [k for k in kwargs if k not in supported and k in _ALL_PARAMS]
+    if unsupported:
+        print(f"[WARNING] The following parameters are not supported for kernel_type '{kernel_type}': {unsupported}. They will be ignored.")
+
+    # Build value lists for each parameter (priority: kwargs > base config > defaults)
+    param_values = {}
+    base_kwargs = config.kwargs
+    base_num_stages = config.num_stages
+
+    for param in sorted(supported):
+        if param in kwargs:
+            # User-provided list via tuning_params takes precedence
+            val_list = kwargs[param]
+        elif param == "num_stages":
+            # num_stages is an attribute of Config, not part of kwargs.
+            # If not provided in tuning_params, use the value from the base config as a fixed single-element list.
+            val_list = [base_num_stages]
+        elif param in base_kwargs:
+            # Parameter present in base config's kwargs -> fix to that single value
+            val_list = [base_kwargs[param]]
+        else:
+            # Otherwise fall back to defaults
+            val_list = _DEFAULTS.get(param, [None])
+
+        # Validate the value list
+        if param in _VALIDATION_RULES:
+            rule = _VALIDATION_RULES[param]
+            if not rule["check"](val_list, param):
+                raise ValueError(f"Invalid value for '{param}': {val_list}. Expected: {rule['desc']}")
+        param_values[param] = val_list
+
+    # Cartesian product of all parameter lists
+    keys = list(param_values.keys())
+    values = list(param_values.values())
+    combos = list(itertools.product(*values))
+
+    new_configs = []
+    for combo in combos:
+        # Start with a copy of the original config's kwargs
+        new_kwargs = config.kwargs.copy()
+        num_stages_val = None
+
+        for i, pname in enumerate(keys):
+            val = combo[i]
+            if pname == "num_stages":
+                num_stages_val = val
+            else:
+                # Overwrite or add the parameter to kwargs
+                new_kwargs[pname] = val
+
+        new_config = Config(
+            kwargs=new_kwargs,
+            num_warps=config.num_warps,
+            num_stages=num_stages_val if num_stages_val is not None else config.num_stages,
+            num_ctas=config.num_ctas,
+            num_buffers_warp_spec=config.num_buffers_warp_spec,
+            num_consumer_groups=config.num_consumer_groups,
+            reg_dec_producer=config.reg_dec_producer,
+            reg_inc_consumer=config.reg_inc_consumer,
+            maxnreg=config.maxnreg,
+            pre_hook=config.pre_hook
+        )
+        new_configs.append(new_config)
+
+    return new_configs
+
+
+def max_autotune(configs, key, kernel_type="mixcv",
+                 prune_configs_by=None, reset_to_zero=None, restore_value=None,
+                 pre_hook=None, post_hook=None, warmup=None, rep=None,
+                 use_cuda_graph=False, do_bench=None, **tuning_params):
+    """
+    Decorator that expands each base Config with tuning parameters before auto-tuning.
+
+    Usage is similar to @triton.autotune, but allows automatic expansion of
+    additional tuning parameters (e.g., enable_hivm_auto_cv_balance, tile_mix_vector_loop, ...)
+    for each provided base configuration.
+
+    :param configs: List of base triton.Config objects.
+    :param key: List of argument names whose change triggers re-tuning.
+    :param kernel_type: Operator type, one of "cube", "mixcv", "vector". Default "mixcv".
+    :param prune_configs_by: Same as in autotune.
+    :param reset_to_zero: Same as in autotune.
+    :param restore_value: Same as in autotune.
+    :param pre_hook: Same as in autotune.
+    :param post_hook: Same as in autotune.
+    :param warmup: Deprecated.
+    :param rep: Deprecated.
+    :param use_cuda_graph: Deprecated.
+    :param do_bench: Same as in autotune.
+    :param tuning_params: Additional tuning parameters as keyword arguments.
+                          Each value must be a list; the Cartesian product of these lists
+                          will be combined with each base config.
+    """
+    def decorator(fn):
+        if not configs or len(configs) == 0:
+            raise ValueError("[max_autotune] The argument 'configs' cannot be empty. "
+                             "Please provide at least one base config. ")
+        # Expand each base config with the provided tuning parameters
+        expanded_configs = []
+        for cfg in configs:
+            expanded = get_max_configs(cfg, kernel_type=kernel_type, **tuning_params)
+            expanded_configs.extend(expanded)
+
+        # Call the original autotune decorator with the expanded configs
+        return autotune(
+            configs=expanded_configs,
+            key=key,
+            prune_configs_by=prune_configs_by,
+            reset_to_zero=reset_to_zero,
+            restore_value=restore_value,
+            pre_hook=pre_hook,
+            post_hook=post_hook,
+            warmup=warmup,
+            rep=rep,
+            use_cuda_graph=use_cuda_graph,
+            do_bench=do_bench
+        )(fn)
     return decorator

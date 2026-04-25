@@ -134,3 +134,103 @@ tensor([0.8329, 1.0024, 1.3639,  ..., 1.0796, 1.0406, 1.5811], device='npu:0')
 tensor([0.8329, 1.0024, 1.3639,  ..., 1.0796, 1.0406, 1.5811], device='npu:0')
 The maximum difference between torch and triton is 0.0
 ```
+
+## 从 GPU 到 NPU：迁移 Triton 示例
+
+Triton-Ascend 在保持与社区 Triton 语法完全兼容的同时，只需在 **张量的设备声明** 和少量 `torch.cuda.*` 接口上做替换，原有 GPU 示例即可在昇腾 NPU 上运行。下面通过一个典型向量加法测试，演示完整的迁移过程。
+
+GPU 版本示例代码如下:
+
+```python
+import pytest
+import torch
+from torch.testing import assert_close
+
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def add_kernel(
+    x_ptr,
+    y_ptr,
+    output_ptr,
+    n_elements,
+    BLOCK_SIZE: tl.constexpr,
+):
+    pid = tl.program_id(axis=0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    y = tl.load(y_ptr + offsets, mask=mask)
+    tl.store(output_ptr + offsets, x + y, mask=mask)
+
+
+@pytest.mark.parametrize('SIZE,BLOCK_SIZE', [(98432, 1024)])
+def test_add(SIZE, BLOCK_SIZE):
+    device_id = torch.cuda.current_device()
+    device = torch.device('cuda', device_id)
+
+    x = torch.randn(SIZE, device='cuda', dtype=torch.float32)
+    y = torch.randn(SIZE, device='cuda', dtype=torch.float32)
+
+    output_cpu = torch.empty(SIZE, dtype=torch.float32)
+    output = output_cpu.cuda()
+
+    def grid(meta):
+        return (triton.cdiv(SIZE, meta['BLOCK_SIZE']),)
+
+    add_kernel[grid](x, y, output, SIZE, BLOCK_SIZE=BLOCK_SIZE)
+
+    torch.cuda.synchronize()
+
+    output_torch = x + y
+    assert_close(output, output_torch, rtol=1e-3, atol=1e-3)
+```
+
+迁移只需将 GPU 相关 API 替换为对应的 NPU 版本，对照关系如下：
+
+| GPU 写法                         | NPU 写法                        |
+| ------------------------------- | ------------------------------- |
+| `device='cuda'`                 | `device='npu'`                  |
+| `tensor.cuda()`                 | `tensor.npu()`                  |
+| `torch.cuda.current_device()`   | `torch.npu.current_device()`    |
+| `torch.cuda.synchronize()`      | `torch.npu.synchronize()`       |
+
+`@triton.jit` 标注的核函数使用的是 Triton 通用语言一般不需要特殊修改， Launch grid 的调用方式也与 GPU 完全一致。
+
+以 diff 形式展示核心改动：
+
+```diff
+import pytest
+import torch
+from torch.testing import assert_close
+
+import triton
+import triton.language as tl
+
+# ...（kernel 代码保持不变）...
+
+@pytest.mark.parametrize('SIZE,BLOCK_SIZE', [(98432, 1024)])
+def test_add(SIZE, BLOCK_SIZE):
+-   device_id = torch.cuda.current_device()
++   device_id = torch.npu.current_device()
+
+-   x = torch.randn(SIZE, device='cuda', dtype=torch.float32)
+-   y = torch.randn(SIZE, device='cuda', dtype=torch.float32)
++   x = torch.randn(SIZE, device='npu', dtype=torch.float32)
++   y = torch.randn(SIZE, device='npu', dtype=torch.float32)
+
+    output_cpu = torch.empty(SIZE, dtype=torch.float32)
+-   output = output_cpu.cuda()
++   output = output_cpu.npu()
+
+    add_kernel[grid](x, y, output, SIZE, BLOCK_SIZE=BLOCK_SIZE)
+
+-   torch.cuda.synchronize()
++   torch.npu.synchronize()
+
+    output_torch = x + y
+    assert_close(output, output_torch, rtol=1e-3, atol=1e-3)
+```

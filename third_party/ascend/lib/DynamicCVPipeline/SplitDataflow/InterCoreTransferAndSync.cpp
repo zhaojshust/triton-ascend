@@ -20,54 +20,38 @@
  * THE SOFTWARE.
  */
 
-#include "ascend/include/DynamicCVPipeline/SplitDataflowPass.h"
-#include "ascend/include/DynamicCVPipeline/SplitDataflow/AddBlockIdForControlOps.h"
-#include "ascend/include/DynamicCVPipeline/SplitDataflow/DataDependencyAnalysis.h"
 #include "ascend/include/DynamicCVPipeline/SplitDataflow/InterCoreTransferAndSync.h"
-#include "ascend/include/DynamicCVPipeline/SplitDataflow/MarkMainLoop.h"
-#include "mlir/Pass/PassManager.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "mlir/Analysis/AliasAnalysis.h"
 #include "llvm/Support/Debug.h"
 
-static constexpr const char *DEBUG_TYPE = "SplitDataflow";
+using namespace mlir;
+
+static constexpr const char *DEBUG_TYPE = "InterCoreTransferAndSync";
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << (X) << "\n")
 
-using namespace mlir;
-using namespace triton;
+using namespace mlir::triton;
+using namespace hivm;
 
-// Run the pass
-void SplitDataflowPass::runOnOperation()
+// Pass Entry Point
+void InterCoreTransferAndSyncPass::runOnOperation()
 {
-    ModuleOp module = getOperation();
-    OpPassManager pm(module.getOperationName());
-    LDBG("Enter pass.");
+  LDBG("\n--- enter InterCoreTransferAndSyncPass --->\n");
+  ModuleOp module = getOperation();
 
-    // Step 1: Add block_id for control flow operations
-    pm.addPass(createAddBlockIdForControlOpsPass());
-
-    // Step 2: Analyze data dependencies between Vector and Cube blocks
-    pm.addPass(createDataDependencyAnalysisPass());
-
-    // Step 3: Run InterCoreTransferAndSync
-    pm.addPass(createInterCoreTransferAndSyncPass());
-
-    // Step 4: Mark the main computation loop
-    pm.addPass(createMarkMainLoopPass());
-
-    // Step 5: Run SeparateCVScope
-
-    if (failed(runPipeline(pm, module))) {
-        module->emitError() << "[" << DEBUG_TYPE << "] Pass failed!";
-        signalPassFailure();
-    }
-
-    LDBG("Process successfully");
+  LDBG("--- exit InterCoreTransferAndSyncPass --->\n");
 }
+
+// Create the pass
 namespace mlir {
 namespace triton {
-std::unique_ptr<OperationPass<ModuleOp>> createSplitDataflowPass()
+
+std::unique_ptr<OperationPass<ModuleOp>> createInterCoreTransferAndSyncPass()
 {
-    return std::make_unique<SplitDataflowPass>();
+    return std::make_unique<InterCoreTransferAndSyncPass>();
 }
+
 } // namespace triton
 } // namespace mlir

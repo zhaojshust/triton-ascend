@@ -20,43 +20,56 @@
  * THE SOFTWARE.
  */
 
-#include "ascend/include/DynamicCVPipeline/SeparateMemoryFromComputePass.h"
-#include "mlir/Pass/PassManager.h"
-#include "llvm/Support/Debug.h"
 #include "ascend/include/DynamicCVPipeline/SeparateMemoryFromCompute/AddMultiBufferToGMLoadPass.h"
 
-static constexpr const char *DEBUG_TYPE = "SeparateMemoryFromCompute";
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/Operation.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Debug.h"
+
+static constexpr const char *DEBUG_TYPE = "AddMultiBufferToGMLoad";
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << (X) << "\n")
 
 using namespace mlir;
 using namespace triton;
 
-static constexpr int kDefaultBufferDepth = 1;
+namespace {
 
-void SeparateMemoryFromComputePass::runOnOperation()
+/// A single marked op with its dependency chain inside the enclosing region.
+struct MarkedLoad {
+  Operation *markedOp;
+  SmallVector<Operation *> chain;
+  memref::AllocOp allocOp = nullptr;
+};
+
+} // anonymous namespace
+
+void AddMultiBufferToGMLoadPass::runOnOperation()
 {
-  ModuleOp module = getOperation();
+  auto module = getOperation();
+  LDBG("Enter AddMultiBufferToGMLoad pass");
 
-  int depth = kDefaultBufferDepth;
+  // All marked ops collected from the module IR.
+  SmallVector<MarkedLoad> markedLoads;
 
-  if (depth <= 1) {
-    LDBG("Buffer depth <= 1, skip multi-buffer transformation");
+  // Step 1: Scan the module IR for ops carrying the `gm_load_bufferable`
+  //   attribute, and compute the dependency chain for each marked op.
+
+  if (markedLoads.empty()) {
+    LDBG("No marked loads found, nothing to transform");
     return;
   }
 
-  OpPassManager pm(module.getOperationName());
-  LDBG("Enter SeparateMemoryFromCompute pass");
+  LDBG("Marked loads collected, start transformation");
 
-  // Step 1: Hoist memory operations out of compute blocks
+  // Step 2: For each marked load, apply multi-buffer transformation.
+  //   Allocate buffer slots, build producer/consumer logic, and rewrite
+  //   the original op to consume data from the selected buffer slot.
 
-  // Step 2: Apply multi-buffering to memory operations
-  pm.addPass(createAddMultiBufferToGMLoadPass());
-
-  if (failed(runPipeline(pm, module))) {
-    module->emitError() << "[" << DEBUG_TYPE << "] Pass failed!";
-    signalPassFailure();
-  }
+  // Step 3: Clean up transformed IR.
+  //   Erase replaced original ops and prune dead values introduced
+  //   during the transformation.
 
   LDBG("Process successfully");
 }
@@ -64,9 +77,9 @@ void SeparateMemoryFromComputePass::runOnOperation()
 namespace mlir {
 namespace triton {
 
-std::unique_ptr<OperationPass<ModuleOp>> createSeparateMemoryFromComputePass()
+std::unique_ptr<OperationPass<ModuleOp>> createAddMultiBufferToGMLoadPass()
 {
-  return std::make_unique<SeparateMemoryFromComputePass>();
+  return std::make_unique<AddMultiBufferToGMLoadPass>();
 }
 
 } // namespace triton

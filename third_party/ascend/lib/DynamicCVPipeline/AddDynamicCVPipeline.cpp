@@ -24,8 +24,10 @@
 #include "llvm/Support/Debug.h"
 #include "ascend/include/DynamicCVPipeline/Passes.h"
 #include "ascend/include/DynamicCVPipeline/PlanComputeBlockPass.h"
+#include "ascend/include/DynamicCVPipeline/SeparateMemoryFromComputePass.h"
 #include "ascend/include/DynamicCVPipeline/SplitDataflowPass.h"
 #include "ascend/include/DynamicCVPipeline/AddControlFlowCondition.h"
+#include "ascend/include/DynamicCVPipeline/AllocMultiCache.h"
 
 static constexpr const char *DEBUG_TYPE = "AddDynamicCVPipeline";
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -61,6 +63,8 @@ void AddDynamicCVPipelinePass::runOnOperation()
     // todo: add related passes.
     pm.addPass(createPlanComputeBlockPass());
     pm.addPass(createSplitDataflowPass());
+    pm.addPass(createSeparateMemoryFromComputePass());
+    pm.addPass(createAllocMultiCachePass());
     pm.addPass(createAddControlFlowConditionPass());
 
     if (failed(runPipeline(pm, getOperation()))) {

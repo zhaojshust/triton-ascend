@@ -134,10 +134,305 @@ def isnan(arg0, _builder=None):
         }, is_pure=True, _builder=_builder)
 
 @core.extern
-def div_rz(arg0, arg1, _builder=None):
+def clz(arg0, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.clz for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0], {
+            (core.dtype("int32"),): ("__hmf_clz_i32", core.dtype("int32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def popc(arg0, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.popc for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0], {
+            (core.dtype("int32"),): ("__hmf_popc_i32", core.dtype("int32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def byte_perm(arg0, arg1, arg2, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.byte_perm for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1, arg2], {
+            (core.dtype("int32"), core.dtype("int32"), core.dtype("int32")): ("__hmf_byte_perm_i32", core.dtype("int32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def mulhi(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.mulhi for simd is unspported for now.")
+        core.static_assert(False)
     return core.extern_elementwise(
         "", "", [arg0, arg1], {
-            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_div_rz_fp32", core.dtype("fp32")),
+            (core.dtype("int32"), core.dtype("int32")): ("__hmf_mulhi_i32", core.dtype("int32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def mul24(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.mul24 for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], {
+            (core.dtype("int32"), core.dtype("int32")): ("__hmf_mul24_i32", core.dtype("int32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def brev(arg0, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.brev for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0], {
+            (core.dtype("int32"),): ("__hmf_brev_i32", core.dtype("int32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def sad(arg0, arg1, arg2, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.sad for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1, arg2], {
+            (core.dtype("int32"), core.dtype("int32"), core.dtype("int32")): ("__hmf_sad_i32", core.dtype("int32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def ffs(arg0, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.ffs for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0], {
+            (core.dtype("int32"),): ("__hmf_ffs_i32", core.dtype("int32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def saturatef(arg0, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.saturatef for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0], {
+            (core.dtype("fp32"),): ("__hmf_saturate_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def hadd(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.hadd for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], { 
+            (core.dtype("int32"), core.dtype("int32")): ("__hmf_hadd_i32", core.dtype("int32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def rhadd(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.rhadd for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], { 
+            (core.dtype("int32"), core.dtype("int32")): ("__hmf_rhadd_i32", core.dtype("int32")),
+        }, is_pure=True, _builder=_builder)
+
+
+@core.extern
+def fdim(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.fdim for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], { 
+            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_fdim_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def exp10(arg0, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.exp10 for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0], { 
+            (core.dtype("fp32"),): ("__hmf_exp10_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+
+@core.extern
+def add_rn(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.add_rn for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], {
+            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_add_rn_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def add_rz(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.add_rz for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], {
+            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_add_rz_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def add_rd(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.add_rd for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], {
+            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_add_rd_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def add_ru(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.add_ru for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], {
+            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_add_ru_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def mul_rn(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.mul_rn for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], {
+            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_mul_rn_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def mul_rz(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.mul_rz for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], {
+            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_mul_rz_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def mul_ru(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.mul_ru for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], {
+            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_mul_ru_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def div_rd(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.div_rd for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], {
+            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_div_rd_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def rcp_rn(arg0, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.rcp_rn for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0], {
+            (core.dtype("fp32"),): ("__hmf_rcp_rn_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def rcp_rz(arg0, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.rcp_rz for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0], {
+            (core.dtype("fp32"),): ("__hmf_rcp_rz_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def rcp_rd(arg0, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.rcp_rd for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0], {
+            (core.dtype("fp32"),): ("__hmf_rcp_rd_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def rcp_ru(arg0, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.rcp_ru for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0], {
+            (core.dtype("fp32"),): ("__hmf_rcp_ru_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def rsqrt_rn(arg0, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.rsqrt_rn for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0], {
+            (core.dtype("fp32"),): ("__hmf_rsqrt_rn_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def fma_rn(arg0, arg1, arg2, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.fma_rn for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1, arg2], {
+            (core.dtype("fp32"), core.dtype("fp32"), core.dtype("fp32")): ("__hmf_fma_rn_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def fma_rz(arg0, arg1, arg2, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.fma_rz for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1, arg2], {
+            (core.dtype("fp32"), core.dtype("fp32"), core.dtype("fp32")): ("__hmf_fma_rz_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def fma_rd(arg0, arg1, arg2, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.fma_rd for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1, arg2], {
+            (core.dtype("fp32"), core.dtype("fp32"), core.dtype("fp32")): ("__hmf_fma_rd_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def fma_ru(arg0, arg1, arg2, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.fma_ru for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1, arg2], {
+            (core.dtype("fp32"), core.dtype("fp32"), core.dtype("fp32")): ("__hmf_fma_ru_fp32", core.dtype("fp32")),
         }, is_pure=True, _builder=_builder)
 
 @core.builtin
@@ -160,6 +455,15 @@ def fmod(arg0, arg1, _builder=None):
             (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_fmod_fp32", core.dtype("fp32")),
         }, is_pure=True, _builder=_builder)
 
+@core.extern
+def remainder(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.remainder for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+    "", "", [arg0, arg1], {
+        (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_remainder_fp32", core.dtype("fp32")),
+    }, is_pure=True, _builder=_builder)
 
 @core.extern
 def float_as_int(arg0, _builder=None):

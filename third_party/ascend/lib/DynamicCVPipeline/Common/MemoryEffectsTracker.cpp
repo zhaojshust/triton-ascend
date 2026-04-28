@@ -45,12 +45,11 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
 
-static constexpr const char *DEBUG_TYPE = "MemoryEffectsTracker";
-#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
-#define LDBG(X) LLVM_DEBUG(DBGS() << (X) << "\n")
-
 using namespace mlir;
-using namespace mlir::triton;
+#define DEBUG_TYPE "memory-effects-tracker"
+#define LOG_DEBUG(msg) LLVM_DEBUG(llvm::dbgs() << " [" << DEBUG_TYPE << "] " << msg)
+
+using namespace mlir::CVPipeline;
 
 namespace {
 
@@ -356,7 +355,7 @@ void MemoryDependenceGraph::applyEffects(Operation *op, ArrayRef<MemoryEffects::
         } else if (isa<MemoryEffects::Free>(e.getEffect())) {
             SmallPtrSet<MemSlot *, INIT_SIZE> toRemove;
             if (!v) {
-                LDBG("Free of unknown value: conservatively drop all slots.");
+                LOG_DEBUG("Free of unknown value: conservatively drop all slots.");
                 for (auto &slot : slots) {
                     toRemove.insert(slot.get());
                 }

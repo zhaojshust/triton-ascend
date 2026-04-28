@@ -2241,6 +2241,48 @@ DotScaledConverter::matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
   Type bf16Ty = rewriter.getBF16Type();
   Type fp16Ty = rewriter.getF16Type();
   Type fp32Ty = rewriter.getF32Type();
+  bool fastMath = op.getFastMath();
+
+  auto createNanSplat = [&](RankedTensorType tensorTy) -> Value {
+    auto floatTy = cast<FloatType>(tensorTy.getElementType());
+    auto nanAttr = rewriter.getFloatAttr(
+        floatTy,
+        APFloat::getNaN(floatTy.getFloatSemantics())
+    );
+    Value empty = rewriter.create<tensor::EmptyOp>(loc, tensorTy.getShape(), tensorTy.getElementType());
+    return rewriter.create<linalg::FillOp>(loc, ValueRange{rewriter.create<arith::ConstantOp>(loc, nanAttr)}, ValueRange{empty}).getResult(0);
+  };
+
+  auto createNaNMask = [&](Value scaleTensor, RankedTensorType scaleTy) -> Value {
+    if (scaleTy.getElementType().isIntOrIndex()) {
+      auto bitWidth = scaleTy.getElementTypeBitWidth();
+      auto allOnes = APInt::getAllOnes(bitWidth);
+      auto sentinel = rewriter.create<arith::ConstantOp>(
+        loc,
+        scaleTy,
+        DenseElementsAttr::get(scaleTy, allOnes)
+      );
+      return rewriter.create<arith::CmpIOp>(
+        loc,
+        arith::CmpIPredicate::eq,
+        scaleTensor,
+        sentinel
+      ).getResult();
+    }
+
+    return rewriter.create<arith::CmpFOp>(
+      loc,
+      arith::CmpFPredicate::UNO,
+      scaleTensor,
+      scaleTensor
+    ).getResult();
+  };
+
+  auto applyNaNMask = [&](Value valueTensor, Value maskTensor) -> Value {
+    auto valueTy = cast<RankedTensorType>(valueTensor.getType());
+    Value nanTensor = createNanSplat(valueTy);
+    return rewriter.create<arith::SelectOp>(loc, maskTensor, nanTensor, valueTensor).getResult();
+  };
 
   if (lhsScaleTy.getElementType().isIntOrIndex()) {
     RankedTensorType lhsScaleI16Ty = RankedTensorType::get(lhsScaleTy.getShape(), i16Ty);
@@ -2445,6 +2487,34 @@ DotScaledConverter::matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
       rhs,
       scaledRhs
     ).getResult();
+
+    if (!fastMath) {
+      Value rhsScaleNaNMask = createNaNMask(transposedRhsScale, transposedRhsScaleTy);
+      Value rhsExpandedMask = rewriter.create<triton::ExpandDimsOp>(
+        op.getLoc(),
+        RankedTensorType::get(rhsExpandedShape1, rewriter.getI1Type()),
+        rhsScaleNaNMask,
+        rewriter.getI32IntegerAttr(2)
+      ).getResult();
+      Value rhsBroadcastMask = rewriter.create<triton::BroadcastOp>(
+        op.getLoc(),
+        RankedTensorType::get(rhsBroadcastShape, rewriter.getI1Type()),
+        rhsExpandedMask
+      ).getResult();
+      Value transposedBroadcastMask = rewriter.create<triton::TransOp>(
+        op.getLoc(),
+        RankedTensorType::get({rhsD0, rhsD2, rhsD1}, rewriter.getI1Type()),
+        rhsBroadcastMask,
+        DenseI32ArrayAttr::get(rewriter.getContext(), transposeOrder)
+      ).getResult();
+      Value collapsedRhsMask = rewriter.create<tensor::CollapseShapeOp>(
+        op.getLoc(),
+        RankedTensorType::get({rhsD0 * rhsD2, rhsD1}, rewriter.getI1Type()),
+        transposedBroadcastMask,
+        rhsReassociation
+      ).getResult();
+      rhs = applyNaNMask(rhs, collapsedRhsMask);
+    }
   }
 
   int64_t D0 = lhsScaleTy.getShape()[0];
@@ -2487,6 +2557,28 @@ DotScaledConverter::matchAndRewrite(triton::DotScaledOp op, OpAdaptor adaptor,
     lhs,
     scaledLhs
   ).getResult();
+
+  if (!fastMath) {
+    Value lhsScaleNaNMask = createNaNMask(lhsScale, lhsScaleTy);
+    Value lhsExpandedMask = rewriter.create<triton::ExpandDimsOp>(
+      op.getLoc(),
+      RankedTensorType::get(expandedShape1, rewriter.getI1Type()),
+      lhsScaleNaNMask,
+      rewriter.getI32IntegerAttr(2)
+    ).getResult();
+    Value lhsBroadcastMask = rewriter.create<triton::BroadcastOp>(
+      op.getLoc(),
+      RankedTensorType::get(broadcastShape, rewriter.getI1Type()),
+      lhsExpandedMask
+    ).getResult();
+    Value collapsedLhsMask = rewriter.create<tensor::CollapseShapeOp>(
+      op.getLoc(),
+      RankedTensorType::get({D0, D1 * D2}, rewriter.getI1Type()),
+      lhsBroadcastMask,
+      reassociation
+    ).getResult();
+    scaledLhsFinal = applyNaNMask(scaledLhsFinal, collapsedLhsMask);
+  }
 
   Operation *matmulOp;
   if (dstType.getRank() == 2) {

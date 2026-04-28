@@ -164,8 +164,12 @@ struct DiscreteMaskStoreConversion : OpRewritePattern<triton::StoreOp> {
     const std::string isDiscreteMaskTag = "is_discrete_mask";
     op->setAttr(isDiscreteMaskTag, rewriter.getUnitAttr());
 
-    if (compileOn91095Flag && forceSimtTemplateFlag)
+    auto ptr = op.getPtr();
+    auto ptrType = dyn_cast<RankedTensorType>(ptr.getType());
+    bool rankWithinIndirectFastPathLimit = ptrType && ptrType.getShape().size() <= 5;
+    if (compileOn91095Flag && forceSimtTemplateFlag && rankWithinIndirectFastPathLimit) {
       return failure();
+    }
 
     // When mask = contMask & discMask, use contMask to bound GM accesses and
     // discMask to select the final per-element value. This prevents the
@@ -230,8 +234,11 @@ struct DiscreteMaskLoadConversion : OpRewritePattern<triton::LoadOp> {
     const std::string isDiscreteMaskTag = "is_discrete_mask";
     op->setAttr(isDiscreteMaskTag, rewriter.getUnitAttr());
 
-    if (compileOn91095Flag && forceSimtTemplateFlag)
+    auto ptrType = dyn_cast<RankedTensorType>(ptr.getType());
+    bool rankWithinIndirectFastPathLimit = ptrType && ptrType.getShape().size() <= 5;
+    if (compileOn91095Flag && forceSimtTemplateFlag && rankWithinIndirectFastPathLimit) {
       return failure();
+    }
 
     // When mask = contMask & discMask, load only the safe range defined by
     // contMask and use discMask for the per-element select, avoiding OOB reads.

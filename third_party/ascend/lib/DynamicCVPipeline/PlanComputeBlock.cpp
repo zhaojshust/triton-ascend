@@ -20,9 +20,10 @@
  * THE SOFTWARE.
  */
 
+#include "ascend/include/DynamicCVPipeline/PlanComputeBlock/OpClassifier.h"
+#include "ascend/include/DynamicCVPipeline/PlanComputeBlockPass.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/Support/Debug.h"
-#include "ascend/include/DynamicCVPipeline/PlanComputeBlockPass.h"
 
 static constexpr const char *DEBUG_TYPE = "PlanComputeBlock";
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -39,6 +40,7 @@ void PlanComputeBlockPass::runOnOperation()
     LDBG("Enter pass.");
 
     // Step 1: Run OpClassifierPass to classify operations
+    pm.addPass(createOpClassifierPass());
 
     // Step 2: Partition compute blocks for core_type=cube
 

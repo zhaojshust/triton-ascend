@@ -1,8 +1,13 @@
+file(GLOB PLAN_COMPUTE_BLOCK_SRC_FILES CONFIGURE_DEPENDS
+    "PlanComputeBlock/*.cpp"
+)
+
 add_triton_library(DynamicCVPipeline
   AddDynamicCVPipeline.cpp
   PlanComputeBlock.cpp
   SplitDataflow.cpp
   AddControlFlowCondition.cpp
+  ${PLAN_COMPUTE_BLOCK_SRC_FILES}
 
   DEPENDS
   AddDynamicCVPipelinePassIncGen

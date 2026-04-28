@@ -1,5 +1,6 @@
 file(GLOB PLAN_COMPUTE_BLOCK_SRC_FILES CONFIGURE_DEPENDS
     "PlanComputeBlock/*.cpp"
+    "Common/*.cpp"
 )
 
 add_triton_library(DynamicCVPipeline

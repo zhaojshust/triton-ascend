@@ -168,15 +168,120 @@ static llvm::FailureOr<DenseMap<Operation *, int>> collectBlockIds(ArrayRef<Oper
     return opBlockId;
 }
 
+namespace {
+
+// Helper structure to hold the group-level graph data.
+struct GroupAdjacencyGraph {
+    SmallVector<int> groupIds;
+    SmallVector<SmallVector<unsigned>> succs;
+    SmallVector<unsigned> inDeg;
+};
+
+} // namespace
+
 /**
- * Builds a topological order of groups based on operation dependencies.
- *
- * This function collapses an operation-level dependency graph into a group-level
- * Directed Acyclic Graph (DAG) and returns the groups in a valid execution order.
+ * Step 1: Build the group-level dependency graph from operator-level edges.
+ * Maps individual operations to their respective groups and identifies
+ * dependencies between those groups.
  */
-static SmallVector<int> buildGroupOrder(const BlockOpGraph & /*g*/, const DenseMap<Operation *, int> & /*opBlockId*/)
+static GroupAdjacencyGraph buildGroupAdjacency(const BlockOpGraph &g, const DenseMap<Operation *, int> &opBlockId)
 {
-    llvm_unreachable("To be implemented by following commit");
+    GroupAdjacencyGraph graph;
+
+    // 1. Collect distinct group IDs while preserving the first-appearance order.
+    DenseSet<int> seenIds;
+    for (Operation *op : g.ops) {
+        int id = opBlockId.at(op);
+        if (seenIds.insert(id).second) {
+            graph.groupIds.push_back(id);
+        }
+    }
+
+    unsigned n = graph.groupIds.size();
+    graph.succs.resize(n);
+    graph.inDeg.assign(n, 0);
+
+    // Map group ID to its index in the groupIds vector for fast lookup.
+    DenseMap<int, unsigned> groupPos;
+    for (unsigned i = 0; i < n; ++i) {
+        groupPos[graph.groupIds[i]] = i;
+    }
+
+    // 2. Build group-level edges. Use a set to avoid duplicate edges between groups.
+    DenseSet<std::pair<unsigned, unsigned>> addedEdges;
+    for (Operation *op : g.ops) {
+        unsigned fromIdx = groupPos[opBlockId.at(op)];
+
+        for (Operation *succ : g.succs.at(op)) {
+            unsigned toIdx = groupPos[opBlockId.at(succ)];
+            // Ignore intra-group dependencies and duplicate inter-group edges.
+            if (fromIdx != toIdx && addedEdges.insert({fromIdx, toIdx}).second) {
+                graph.succs[fromIdx].push_back(toIdx);
+                graph.inDeg[toIdx]++;
+            }
+        }
+    }
+
+    // Logging the constructed group graph.
+    LOG_DEBUG("Group-level edges:\n");
+    for (unsigned i = 0; i < n; ++i) {
+        LOG_DEBUG("  Group " << graph.groupIds[i] << " -> ");
+        for (unsigned succIdx : graph.succs[i]) {
+            LOG_DEBUG(graph.groupIds[succIdx] << " ");
+        }
+        LOG_DEBUG("\n");
+    }
+
+    return graph;
+}
+
+/**
+ * Step 2: Perform a topological sort (Kahn's Algorithm) on the group graph.
+ * Returns the group IDs in an order that satisfies all dependencies.
+ */
+static SmallVector<int> computeTopologicalOrder(GroupAdjacencyGraph &graph)
+{
+    SmallVector<int> result;
+    SmallVector<unsigned> ready; // Nodes with in-degree 0.
+    unsigned n = graph.groupIds.size();
+
+    for (unsigned i = 0; i < n; ++i) {
+        if (graph.inDeg[i] == 0) {
+            ready.push_back(i);
+        }
+    }
+
+    while (!ready.empty()) {
+        auto cur = ready.pop_back_val();
+
+        result.push_back(graph.groupIds[cur]);
+
+        for (unsigned succIdx : graph.succs[cur]) {
+            if (--graph.inDeg[succIdx] == 0) {
+                ready.push_back(succIdx);
+            }
+        }
+    }
+
+    LOG_DEBUG("Group order: ");
+    for (int id : result) {
+        LOG_DEBUG(id << " ");
+    }
+    LOG_DEBUG("\n");
+
+    return result;
+}
+
+/**
+ * Main entry point to build the group order.
+ */
+static SmallVector<int> buildGroupOrder(const BlockOpGraph &g, const DenseMap<Operation *, int> &opBlockId)
+{
+    // 1. Construct the graph
+    GroupAdjacencyGraph graph = buildGroupAdjacency(g, opBlockId);
+
+    // 2. Sort the graph
+    return computeTopologicalOrder(graph);
 }
 
 // Stable sort ops based on their group orders

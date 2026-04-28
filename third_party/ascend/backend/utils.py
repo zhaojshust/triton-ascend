@@ -28,7 +28,7 @@ import subprocess
 import sysconfig
 from pathlib import Path
 import logging
-from platform import python_version
+import platform
 from triton.tools.get_ascend_devices import is_compile_on_910_95
 from triton.backends.ascend.backend_register import backend_strategy_registry
 
@@ -569,3 +569,41 @@ def triton_support_ffts():
 def triton_enable_libdevice_simt():
     enable_libdevice_simt = os.getenv("TRITON_ENABLE_LIBDEVICE_SIMT", False)
     return enable_libdevice_simt
+
+
+def get_cann_version():
+    ascend_path = _get_ascend_path()
+    arch = get_machine_arch()
+    cann_version_file_path = os.path.join(ascend_path, arch + "-linux", "ascend_toolkit_install.info")
+    if not os.path.exists(cann_version_file_path):
+        cann_version_file_path = os.path.join(ascend_path, arch + "-linux", "ascend_all_cann_install.info")
+    version = ""
+    innerversion = ""
+    with open(cann_version_file_path) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("version="):
+                version = line.split('=')[1]
+            elif line.startswith("innerversion="):
+                innerversion = line.split('=')[1]
+    if version and innerversion:
+        return "CANN-" + version + "-" + innerversion
+    if version:
+        return "CANN-" + version
+    raise ValueError(f"get_cann_version is empty!")
+
+
+def get_machine_arch():
+    ARCHITECTURE_ALIASES = {
+        "x86_64": "x86_64",
+        "amd64": "x86_64",
+        "i386": "x86_64",
+        "i686": "x86_64",
+        "arm64": "aarch64",
+        "aarch64": "aarch64",
+        "armv7l": "aarch64",
+        "armv8l": "aarch64",
+        "arm": "aarch64",
+    }
+    system_arch = platform.machine()
+    return ARCHITECTURE_ALIASES[system_arch]

@@ -20,12 +20,6 @@
  * THE SOFTWARE.
  */
 
-#include <memory>
-
-#include <mlir/IR/BuiltinOps.h>
-#include <mlir/Support/LLVM.h>
-#include <mlir/Support/TypeID.h>
-
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/iterator.h"
@@ -33,6 +27,7 @@
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Block.h"

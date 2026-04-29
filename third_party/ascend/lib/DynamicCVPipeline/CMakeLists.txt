@@ -3,6 +3,10 @@ file(GLOB PLAN_COMPUTE_BLOCK_SRC_FILES CONFIGURE_DEPENDS
     "Common/*.cpp"
 )
 
+file(GLOB ADD_CONTROLFLOW_CONDITION_SRC_FILES CONFIGURE_DEPENDS
+ 	     "AddControlFlowCondition/*.cpp"
+)
+
 add_triton_library(DynamicCVPipeline
   AddDynamicCVPipeline.cpp
   PlanComputeBlock.cpp
@@ -11,6 +15,7 @@ add_triton_library(DynamicCVPipeline
   AllocMultiCache.cpp
   AddControlFlowCondition.cpp
   ${PLAN_COMPUTE_BLOCK_SRC_FILES}
+  ${ADD_CONTROLFLOW_CONDITION_SRC_FILES}
 
   DEPENDS
   AddDynamicCVPipelinePassIncGen

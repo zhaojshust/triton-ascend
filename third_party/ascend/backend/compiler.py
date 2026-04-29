@@ -628,6 +628,12 @@ def linalg_to_bin_enable_npu_compile_A2_A3(linalg: str, metadata, opt):
                 f"--enable-code-motion={code_motion}",
             ]
 
+        enable_preload = metadata["enable_preload"]
+        if enable_preload is not None:
+            _compile_option_list += [
+                f"--enable-preload={enable_preload}",
+            ]
+
         _compile_option_list += [
             f"--enable-auto-bind-sub-block={get_auto_bind_sub_block_option(metadata)}",
         ]
@@ -837,6 +843,7 @@ class NPUOptions:
     code_motion: bool = None
     vf_fusion_mode: str = None
     enable_ubuf_saving: bool = None
+    enable_preload: bool = None
     enable_auto_bind_sub_block: bool = None
     disable_tightly_coupled_buffer_reuse: bool = False
     enable_select_analysis: bool = True

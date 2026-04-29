@@ -532,6 +532,7 @@ class AutoTilingTuner(Autotuner):
         if existing_vector_axes is not None:
             vector_axes.apply_semantic_fields(
                 axis_length_exprs=getattr(existing_vector_axes, "axis_length_exprs", {}),
+                fixed_tiling_exprs=getattr(existing_vector_axes, "fixed_tiling_exprs", {}),
                 axis_dynamic_sources=getattr(existing_vector_axes, "axis_dynamic_sources", {}),
             )
 
@@ -1265,6 +1266,7 @@ class AutoTilingTuner(Autotuner):
                 reduction_axes=self.vector_axes.reduction_axes,
                 axis_pid_dims=self.vector_axes.axis_pid_dims,
                 axis_length_exprs=self.vector_axes.axis_length_exprs,
+                fixed_tiling_exprs=self.vector_axes.fixed_tiling_exprs,
                 axis_dynamic_sources=self.vector_axes.axis_dynamic_sources,
             )
 
@@ -1848,6 +1850,7 @@ class AutoTilingTuner(Autotuner):
                     reduction_axes=getattr(self.vv_adapter_result_v2, "reduction_axes", None),
                     axis_pid_dims=getattr(self.vv_adapter_result_v2, "axis_pid_dims", None),
                     axis_length_exprs=getattr(self.vv_adapter_result_v2, "axis_length_exprs", None),
+                    fixed_tiling_exprs=getattr(self.vv_adapter_result_v2, "fixed_tiling_exprs", None),
                     axis_dynamic_sources=getattr(self.vv_adapter_result_v2, "axis_dynamic_sources", None),
                 )
             return result

@@ -33,6 +33,7 @@ class VvConfigAdapterResult:
     low_dim_axes: List[str] = field(default_factory=list)
     reduction_axes: List[str] = field(default_factory=list)
     axis_length_exprs: Dict[str, str] = field(default_factory=dict)
+    fixed_tiling_exprs: Dict[str, str] = field(default_factory=dict)
     axis_dynamic_sources: Dict[str, str] = field(default_factory=dict)
     axis_pid_dims: Dict[str, int] = field(default_factory=dict)
     inferred_keys: Dict[str, str] = field(default_factory=dict)
@@ -79,6 +80,9 @@ def adapt_vv_v2_to_vector_inputs(
     direct_low_dim = list(getattr(vv_parse_result, "low_dim_axes", []) or [])
     direct_reduction = list(getattr(vv_parse_result, "reduction_axes", []) or [])
     direct_axis_length_exprs = dict(getattr(vv_parse_result, "axis_length_exprs", {}) or {})
+    direct_fixed_tiling_exprs = dict(
+        getattr(vv_parse_result, "fixed_tiling_exprs", {}) or {}
+    )
     direct_axis_dynamic_sources = dict(getattr(vv_parse_result, "axis_dynamic_sources", {}) or {})
     direct_axis_pid_dims = dict(getattr(vv_parse_result, "axis_pid_dims", {}) or {})
     direct_inferred_keys = dict(getattr(vv_parse_result, "inferred_keys", {}) or {})
@@ -94,6 +98,7 @@ def adapt_vv_v2_to_vector_inputs(
         or direct_low_dim
         or direct_reduction
         or direct_axis_length_exprs
+        or direct_fixed_tiling_exprs
         or direct_axis_dynamic_sources
         or direct_axis_pid_dims
         or direct_inferred_keys
@@ -104,6 +109,7 @@ def adapt_vv_v2_to_vector_inputs(
             low_dim_axes=direct_low_dim,
             reduction_axes=direct_reduction,
             axis_length_exprs=direct_axis_length_exprs,
+            fixed_tiling_exprs=direct_fixed_tiling_exprs,
             axis_dynamic_sources=direct_axis_dynamic_sources,
             axis_pid_dims=direct_axis_pid_dims,
             inferred_keys=direct_inferred_keys,
@@ -140,6 +146,7 @@ def adapt_vv_v2_to_vector_inputs(
                 low_dim_axes=direct_low_dim,
                 reduction_axes=direct_reduction,
                 axis_length_exprs=direct_axis_length_exprs,
+                fixed_tiling_exprs=direct_fixed_tiling_exprs,
                 axis_dynamic_sources=direct_axis_dynamic_sources,
                 axis_pid_dims=direct_axis_pid_dims,
                 inferred_keys=direct_inferred_keys,
@@ -172,6 +179,7 @@ def adapt_vv_v2_to_vector_inputs(
                 low_dim_axes=direct_low_dim,
                 reduction_axes=direct_reduction,
                 axis_length_exprs=direct_axis_length_exprs,
+                fixed_tiling_exprs=direct_fixed_tiling_exprs,
                 axis_dynamic_sources=direct_axis_dynamic_sources,
                 axis_pid_dims=direct_axis_pid_dims,
                 inferred_keys=direct_inferred_keys,
@@ -185,6 +193,7 @@ def adapt_vv_v2_to_vector_inputs(
         low_dim_axes=direct_low_dim,
         reduction_axes=direct_reduction,
         axis_length_exprs=direct_axis_length_exprs,
+        fixed_tiling_exprs=direct_fixed_tiling_exprs,
         axis_dynamic_sources=direct_axis_dynamic_sources,
         axis_pid_dims=direct_axis_pid_dims,
         inferred_keys=direct_inferred_keys,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Mapping, Optional, Tuple
@@ -13,6 +14,7 @@ DEFAULT_AXIS_FALLBACK_SIZE = 512
 class VectorAxis:
     name: str
     length_expr: Optional[str] = None
+    fixed_tiling_expr: Optional[str] = None
     dynamic_source: str = "none"
     split_param: Optional[str] = None
     tiling_param: Optional[str] = None
@@ -55,6 +57,7 @@ class VectorAxes:
         reduction_axes: Optional[Iterable[str]] = None,
         axis_pid_dims: Optional[Mapping[str, int]] = None,
         axis_length_exprs: Optional[Mapping[str, str]] = None,
+        fixed_tiling_exprs: Optional[Mapping[str, str]] = None,
         axis_dynamic_sources: Optional[Mapping[str, str]] = None,
     ) -> None:
         for axis_name, param in dict(split_params or {}).items():
@@ -78,6 +81,8 @@ class VectorAxes:
             self.ensure_axis(axis_name).pid_dim = pid_dim
         for axis_name, expr in dict(axis_length_exprs or {}).items():
             self.ensure_axis(axis_name).length_expr = expr
+        for axis_name, expr in dict(fixed_tiling_exprs or {}).items():
+            self.ensure_axis(axis_name).fixed_tiling_expr = expr
         for axis_name, source in dict(axis_dynamic_sources or {}).items():
             self.ensure_axis(axis_name).dynamic_source = source
 
@@ -141,6 +146,14 @@ class VectorAxes:
         }
 
     @property
+    def fixed_tiling_exprs(self) -> Dict[str, str]:
+        return {
+            axis.name: axis.fixed_tiling_expr
+            for axis in self.axes.values()
+            if isinstance(axis.fixed_tiling_expr, str) and axis.fixed_tiling_expr
+        }
+
+    @property
     def axis_dynamic_sources(self) -> Dict[str, str]:
         return {
             axis.name: axis.dynamic_source
@@ -154,7 +167,12 @@ class VectorAxes:
 
     @staticmethod
     def _should_materialize_axis(axis: VectorAxis) -> bool:
-        return bool(axis.split_param or axis.tiling_param or axis.length_expr)
+        return bool(
+            axis.split_param
+            or axis.tiling_param
+            or axis.length_expr
+            or axis.fixed_tiling_expr
+        )
 
     @staticmethod
     def _record_axis_property(store: List[str], axis_name: str) -> None:
@@ -170,6 +188,21 @@ class VectorAxes:
         axis: VectorAxis,
         all_args: Mapping[str, object],
     ) -> Tuple[int, Dict[str, object]]:
+        if not axis.split_param and not axis.tiling_param:
+            fixed_tiling_value, resolved_by = VectorAxes._resolve_positive_int_expr(
+                axis.fixed_tiling_expr,
+                all_args,
+            )
+            if fixed_tiling_value is not None:
+                return fixed_tiling_value, {
+                    "axis": axis.name,
+                    "length_expr": axis.length_expr,
+                    "fixed_tiling_expr": axis.fixed_tiling_expr,
+                    "dynamic_source": axis.dynamic_source or "none",
+                    "resolved_by": resolved_by,
+                    "resolved_value": fixed_tiling_value,
+                }
+
         runtime_value = all_args.get(axis.name)
         if VectorAxes._is_positive_int(runtime_value):
             return runtime_value, {
@@ -231,3 +264,87 @@ class VectorAxes:
     @staticmethod
     def _is_positive_int(value: object) -> bool:
         return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+    @staticmethod
+    def _resolve_positive_int_expr(
+        expr: Optional[str],
+        all_args: Mapping[str, object],
+    ) -> Tuple[Optional[int], Optional[str]]:
+        if not isinstance(expr, str) or not expr:
+            return None, None
+
+        runtime_value = all_args.get(expr)
+        if VectorAxes._is_positive_int(runtime_value):
+            return runtime_value, "fixed_tiling_expr_arg"
+
+        literal_value = VectorAxes._parse_positive_int_literal(expr)
+        if literal_value is not None:
+            return literal_value, "fixed_tiling_expr_literal"
+
+        static_value = VectorAxes._evaluate_positive_int_expr(expr, all_args)
+        if static_value is not None:
+            return static_value, "fixed_tiling_expr_static"
+        return None, None
+
+    @staticmethod
+    def _evaluate_positive_int_expr(
+        expr: str,
+        all_args: Mapping[str, object],
+    ) -> Optional[int]:
+        try:
+            node = ast.parse(expr, mode="eval").body
+        except Exception:
+            return None
+
+        value = VectorAxes._evaluate_static_expr_node(node, all_args)
+        if VectorAxes._is_positive_int(value):
+            return value
+        return None
+
+    @staticmethod
+    def _evaluate_static_expr_node(
+        node: ast.AST,
+        all_args: Mapping[str, object],
+    ) -> Optional[int]:
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, int) and not isinstance(node.value, bool):
+                return node.value
+            return None
+
+        if isinstance(node, ast.Name):
+            value = all_args.get(node.id)
+            return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+        if isinstance(node, ast.UnaryOp):
+            operand = VectorAxes._evaluate_static_expr_node(node.operand, all_args)
+            if operand is None:
+                return None
+            if isinstance(node.op, ast.UAdd):
+                return operand
+            if isinstance(node.op, ast.USub):
+                return -operand
+            return None
+
+        if isinstance(node, ast.BinOp):
+            left = VectorAxes._evaluate_static_expr_node(node.left, all_args)
+            right = VectorAxes._evaluate_static_expr_node(node.right, all_args)
+            if left is None or right is None:
+                return None
+            try:
+                if isinstance(node.op, ast.Add):
+                    return left + right
+                if isinstance(node.op, ast.Sub):
+                    return left - right
+                if isinstance(node.op, ast.Mult):
+                    return left * right
+                if isinstance(node.op, ast.FloorDiv):
+                    if right == 0:
+                        return None
+                    return left // right
+                if isinstance(node.op, ast.Mod):
+                    if right == 0:
+                        return None
+                    return left % right
+            except Exception:
+                return None
+        return None

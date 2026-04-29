@@ -29,7 +29,8 @@ from .axis_semantic_schema import (AxisExtent, AxisSemanticInfo,
                                    AxisSemanticResult, AxisSplit, AxisTiling)
 from .dynamic_source_utils import resolve_dynamic_source
 from .load_dependency_analyzer import collect_load_derived_symbols
-from .schema import AXIS_LENGTH_STATE_TUNABLE
+from .schema import (AXIS_LENGTH_STATE_FIXED_COMPILE_TIME,
+                     AXIS_LENGTH_STATE_TUNABLE)
 from .signature_analyzer import extract_signature_info
 
 _VALID_AXIS_NAMES = ("x", "y", "z", "w", "v", "t")
@@ -46,6 +47,7 @@ class VvAxisInfoV2:
     const_value: Optional[int] = None
     split_param: Optional[str] = None
     tiling_param: Optional[str] = None
+    fixed_tiling_expr: Optional[str] = None
     is_low_dim: bool = False
     is_reduction: bool = False
     dynamic_source: str = "none"
@@ -58,6 +60,7 @@ class VvAxisParseResultV2:
     source: str
     diagnostics: List[str]
     axis_length_exprs: Dict[str, str] = field(default_factory=dict)
+    fixed_tiling_exprs: Dict[str, str] = field(default_factory=dict)
     axis_pid_dims: Dict[str, int] = field(default_factory=dict)
     inferred_keys: Dict[str, str] = field(default_factory=dict)
     split_params: Dict[str, str] = field(default_factory=dict)
@@ -75,6 +78,7 @@ class _SemanticAxisEvidence:
     extent_candidates: List[Tuple[str, str, float]] = field(default_factory=list)
     split_candidates: List[Tuple[str, int, str, float]] = field(default_factory=list)
     tiling_candidates: List[Tuple[str, Optional[str], str, float]] = field(default_factory=list)
+    fixed_tiling_candidates: List[Tuple[str, str, float]] = field(default_factory=list)
     is_low_dim: bool = False
     diagnostics: List[str] = field(default_factory=list)
 
@@ -1264,6 +1268,26 @@ def _extract_make_block_ptr_tiling_param(
     return text
 
 
+def _extract_make_block_ptr_fixed_tiling_expr(
+    expr: Optional[ast.AST],
+    signature,
+    provided_args: Mapping[str, object],
+) -> Optional[str]:
+    if expr is None:
+        return None
+    text = _ast_to_text(expr)
+    state, _ = classify_length_symbol(
+        text,
+        signature=signature,
+        provided_args=provided_args,
+    )
+    if state == AXIS_LENGTH_STATE_TUNABLE:
+        return None
+    if text and state == AXIS_LENGTH_STATE_FIXED_COMPILE_TIME:
+        return text
+    return None
+
+
 def _extract_tiling_candidates_for_symbol(
     symbol: str,
     assignment_expr_map: Mapping[str, Sequence[ast.AST]],
@@ -1304,6 +1328,37 @@ def _extract_tiling_candidates_for_symbol(
                         if key not in seen:
                             seen.add(key)
                             result.append((left_name, right_name, "range", 0.75))
+    return result
+
+
+def _extract_fixed_tiling_candidates_for_symbol(
+    symbol: str,
+    assignment_expr_map: Mapping[str, Sequence[ast.AST]],
+    signature,
+    provided_args: Mapping[str, object],
+) -> List[Tuple[str, str, float]]:
+    exprs = list(assignment_expr_map.get(symbol, ()))
+    if not exprs:
+        return []
+
+    result: List[Tuple[str, str, float]] = []
+    seen = set()
+
+    for expr in exprs:
+        for current_expr in _iter_expr_closure(expr, assignment_expr_map):
+            for stop_text in _collect_arange_stop_texts(current_expr):
+                state, _ = classify_length_symbol(
+                    stop_text,
+                    signature=signature,
+                    provided_args=provided_args,
+                )
+                if state != AXIS_LENGTH_STATE_FIXED_COMPILE_TIME:
+                    continue
+                key = (stop_text, "arange")
+                if key in seen:
+                    continue
+                seen.add(key)
+                result.append((stop_text, "arange", 0.9))
     return result
 
 
@@ -1396,6 +1451,23 @@ def _select_best_tiling(
             "multiple tiling candidates resolved, selected {}".format(best[0])
         )
     return AxisTiling(param=best[0], loop_var=best[1], source=best[2], confidence=best[3]), diagnostics
+
+
+def _select_best_fixed_tiling_expr(
+    candidates: Sequence[Tuple[str, str, float]],
+) -> Tuple[Optional[str], List[str]]:
+    if not candidates:
+        return None, []
+
+    ordered = sorted(candidates, key=lambda item: (-item[2], item[0]))
+    best = ordered[0]
+    diagnostics: List[str] = []
+    distinct = {expr for expr, _, _ in ordered}
+    if len(distinct) > 1:
+        diagnostics.append(
+            "multiple fixed tiling candidates resolved, selected {}".format(best[0])
+        )
+    return best[0], diagnostics
 
 
 def _extent_priority(source: str) -> int:
@@ -1729,6 +1801,22 @@ def parse_vv_axis_semantic_v2(
                 return
         evidence.tiling_candidates.append((param, loop_var, source, confidence))
 
+    def _append_fixed_tiling(
+        site: Dict[int, _SemanticAxisEvidence],
+        axis_index: int,
+        expr: str,
+        source: str,
+        confidence: float,
+    ) -> None:
+        if not expr:
+            return
+        evidence = _ensure_evidence(site, axis_index)
+        key = (expr, source)
+        for item in evidence.fixed_tiling_candidates:
+            if (item[0], item[1]) == key:
+                return
+        evidence.fixed_tiling_candidates.append((expr, source, confidence))
+
     def _append_make_block_ptr_spec(
         site: Dict[int, _SemanticAxisEvidence],
         spec: _MakeBlockPtrSpec,
@@ -1749,9 +1837,22 @@ def parse_vv_axis_semantic_v2(
                 block_shape_expr,
                 tunable_params,
             )
-            if param is None:
+            if param is not None:
+                _append_tiling(site, axis_index, param, None, "make_block_ptr", 0.85)
                 continue
-            _append_tiling(site, axis_index, param, None, "make_block_ptr", 0.85)
+            fixed_expr = _extract_make_block_ptr_fixed_tiling_expr(
+                block_shape_expr,
+                signature,
+                provided_args,
+            )
+            if fixed_expr is not None:
+                _append_fixed_tiling(
+                    site,
+                    axis_index,
+                    fixed_expr,
+                    "make_block_ptr",
+                    0.8,
+                )
 
     for node in _iter_walk_in_order(func_node):
         if _is_tl_call(node, "make_block_ptr"):
@@ -1860,6 +1961,14 @@ def parse_vv_axis_semantic_v2(
             ):
                 _append_tiling(current_site, axis_index, param, loop_var, source, confidence)
 
+            for expr, source, confidence in _extract_fixed_tiling_candidates_for_symbol(
+                symbol,
+                assignment_expr_map,
+                signature,
+                provided_args,
+            ):
+                _append_fixed_tiling(current_site, axis_index, expr, source, confidence)
+
         if current_site:
             site_evidences.append(current_site)
 
@@ -1868,6 +1977,7 @@ def parse_vv_axis_semantic_v2(
         return AxisSemanticResult(
             axes={},
             axis_length_exprs={},
+            fixed_tiling_exprs={},
             axis_pid_dims={},
             inferred_keys={},
             split_params={},
@@ -1895,6 +2005,7 @@ def parse_vv_axis_semantic_v2(
 
     axes: Dict[str, AxisSemanticInfo] = {}
     axis_length_exprs: Dict[str, str] = {}
+    fixed_tiling_exprs: Dict[str, str] = {}
     axis_pid_dims: Dict[str, int] = {}
     inferred_keys: Dict[str, str] = {}
     split_params: Dict[str, str] = {}
@@ -1910,6 +2021,9 @@ def parse_vv_axis_semantic_v2(
 
         split, split_diag = _select_best_split(evidence.split_candidates)
         tiling, tiling_diag = _select_best_tiling(evidence.tiling_candidates, split.param)
+        fixed_tiling_expr, fixed_tiling_diag = _select_best_fixed_tiling_expr(
+            evidence.fixed_tiling_candidates
+        )
         extent, extent_diag = _select_best_extent(
             evidence.extent_candidates,
             split.param,
@@ -1923,6 +2037,7 @@ def parse_vv_axis_semantic_v2(
         axis_diags: List[str] = []
         axis_diags.extend(split_diag)
         axis_diags.extend(tiling_diag)
+        axis_diags.extend(fixed_tiling_diag)
         axis_diags.extend(extent_diag)
         axis_diags.extend(evidence.diagnostics)
 
@@ -1943,6 +2058,8 @@ def parse_vv_axis_semantic_v2(
             split_params[axis_name] = split.param
         if tiling.param is not None:
             tiling_params[axis_name] = tiling.param
+        if fixed_tiling_expr is not None:
+            fixed_tiling_exprs[axis_name] = fixed_tiling_expr
 
         if evidence.is_low_dim:
             low_dim_axes.append(axis_name)
@@ -1953,7 +2070,13 @@ def parse_vv_axis_semantic_v2(
             axis_name=axis_name,
             extent=extent,
             split=split,
-            tiling=tiling,
+            tiling=AxisTiling(
+                param=tiling.param,
+                loop_var=tiling.loop_var,
+                source=tiling.source,
+                confidence=tiling.confidence,
+                fixed_expr=fixed_tiling_expr,
+            ),
             is_low_dim=evidence.is_low_dim,
             is_reduction=is_reduction,
             diagnostics=axis_diags,
@@ -1982,6 +2105,7 @@ def parse_vv_axis_semantic_v2(
     return AxisSemanticResult(
         axes=axes,
         axis_length_exprs=axis_length_exprs,
+        fixed_tiling_exprs=fixed_tiling_exprs,
         axis_pid_dims=axis_pid_dims,
         inferred_keys=inferred_keys,
         split_params=split_params,
@@ -2030,6 +2154,7 @@ def parse_vv_axis_info_v2(
                 const_value=extent.const_value,
                 split_param=semantic_axis.split.param,
                 tiling_param=semantic_axis.tiling.param,
+                fixed_tiling_expr=semantic_axis.tiling.fixed_expr,
                 is_low_dim=semantic_axis.is_low_dim,
                 is_reduction=semantic_axis.is_reduction,
                 dynamic_source=extent.dynamic_source,
@@ -2055,6 +2180,7 @@ def parse_vv_axis_info_v2(
         source=source,
         diagnostics=list(semantic_result.diagnostics),
         axis_length_exprs=dict(semantic_result.axis_length_exprs),
+        fixed_tiling_exprs=dict(semantic_result.fixed_tiling_exprs),
         axis_pid_dims=dict(semantic_result.axis_pid_dims),
         inferred_keys=dict(semantic_result.inferred_keys),
         split_params=dict(semantic_result.split_params),

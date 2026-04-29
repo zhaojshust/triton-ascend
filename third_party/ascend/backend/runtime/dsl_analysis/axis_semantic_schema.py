@@ -48,6 +48,7 @@ class AxisTiling:
     loop_var: Optional[str]
     source: str
     confidence: float
+    fixed_expr: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class AxisSemanticInfo:
 class AxisSemanticResult:
     axes: Dict[str, AxisSemanticInfo]
     axis_length_exprs: Dict[str, str]
+    fixed_tiling_exprs: Dict[str, str]
     axis_pid_dims: Dict[str, int]
     inferred_keys: Dict[str, str]
     split_params: Dict[str, str]

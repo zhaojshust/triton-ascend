@@ -620,6 +620,77 @@ def test_generate_key_and_configs_preserves_promoted_reduction_axis_identity():
     assert captured["kv_dict"] == {"rx": 23}
 
 
+def test_parse_vv_axis_info_v2_collects_fixed_tiling_expr_for_provided_constexpr():
+    from triton.backends.ascend.runtime.dsl_analysis.vv_param_parser_v2 import (
+        parse_vv_axis_info_v2,
+    )
+
+    func_ast = ast.parse(
+        """
+def silu_like_kernel(
+    x,
+    y,
+    stride_row,
+    n_rows,
+    n_cols,
+    BLOCK_SIZE_N: tl.constexpr,
+    BLOCK_SIZE_M: tl.constexpr,
+):
+    pid = tl.program_id(axis=0)
+    grid_size = tl.num_programs(axis=0)
+    num_row_tasks = (n_rows + BLOCK_SIZE_M - 1) // BLOCK_SIZE_M
+    for row_task_id in range(pid, num_row_tasks, grid_size):
+        block_start_row = row_task_id * BLOCK_SIZE_M
+        rows_off = block_start_row + tl.arange(0, BLOCK_SIZE_M)
+        rows_mask = rows_off < n_rows
+        for col_offset in range(0, n_cols, BLOCK_SIZE_N):
+            cols_off = col_offset + tl.arange(0, BLOCK_SIZE_N)
+            cols_mask = cols_off < n_cols
+            block_mask = rows_mask[:, None] & cols_mask[None, :]
+            x_ptrs = x + rows_off[:, None] * stride_row + cols_off[None, :]
+            y_ptrs = y + rows_off[:, None] * stride_row + cols_off[None, :]
+            x_chunk = tl.load(x_ptrs, mask=block_mask, other=0.0)
+            tl.store(y_ptrs, x_chunk, mask=block_mask)
+"""
+    ).body[0]
+
+    result = parse_vv_axis_info_v2(
+        func_ast,
+        provided_args={
+            "n_rows": 4096,
+            "n_cols": 8192,
+            "BLOCK_SIZE_N": 2048,
+        },
+        hints={"vv_parser_v2_mode": "assist"},
+    )
+
+    assert result.axis_length_exprs == {"x": "n_rows", "y": "n_cols"}
+    assert result.fixed_tiling_exprs == {"y": "BLOCK_SIZE_N"}
+
+
+def test_vector_axes_materialize_axis_sizes_prefers_fixed_tiling_expr_for_non_split_axis():
+    vector_axes_module = _load_vector_axes_module()
+    vector_axes = vector_axes_module.VectorAxes.from_hints_axes(
+        {"x": "n_rows", "y": "n_cols"}
+    )
+    vector_axes.apply_semantic_fields(
+        split_params={"x": "BLOCK_SIZE_M"},
+        low_dim_axes=["y"],
+        fixed_tiling_exprs={"y": "BLOCK_SIZE_N"},
+    )
+
+    axis_sizes, diagnostics = vector_axes.materialize_axis_sizes(
+        {
+            "n_rows": 4096,
+            "n_cols": 8192,
+            "BLOCK_SIZE_N": 2048,
+        }
+    )
+
+    assert axis_sizes == {"x": 4096, "y": 2048}
+    assert diagnostics["y"]["resolved_by"] == "fixed_tiling_expr_arg"
+
+
 @triton.autotune(
     configs=[],
     key=["n_elements"],

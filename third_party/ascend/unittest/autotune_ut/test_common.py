@@ -28,6 +28,7 @@ def _serialize_vector_axes(vector_axes):
     if vector_axes is None:
         return {
             "axis_length_exprs": {},
+            "fixed_tiling_exprs": {},
             "split_params": {},
             "tiling_params": {},
             "low_dim_axes": [],
@@ -35,6 +36,7 @@ def _serialize_vector_axes(vector_axes):
         }
     return {
         "axis_length_exprs": dict(getattr(vector_axes, "axis_length_exprs", {}) or {}),
+        "fixed_tiling_exprs": dict(getattr(vector_axes, "fixed_tiling_exprs", {}) or {}),
         "split_params": dict(getattr(vector_axes, "split_params", {}) or {}),
         "tiling_params": dict(getattr(vector_axes, "tiling_params", {}) or {}),
         "low_dim_axes": list(getattr(vector_axes, "low_dim_axes", []) or []),

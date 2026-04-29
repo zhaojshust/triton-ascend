@@ -23,8 +23,6 @@
 #include "ascend/include/DiscreteMaskAccessConversion/Passes.h"
 #include "Utils/Utils.h"
 
-#include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
-#include "ascend/include/TritonToUnstructure/OffsetAnalysis.h"
 #include "ascend/include/TritonToLinalg/MaskAnalysis.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "ascend/include/TritonToStructured/MemOpConverter.h"
@@ -163,22 +161,11 @@ struct DiscreteMaskStoreConversion : OpRewritePattern<triton::StoreOp> {
     if (failed(isDiscreteMask(op, mask, rewriter)))
       return failure();
 
-    if (compileOn91095Flag && forceSimtTemplateFlag) {
-      llvm::DenseMap<Value, PtrOffsetInfo> offsetMap;
-      mlir::triton::parse(dst, loc, rewriter, offsetMap);
+    const std::string isDiscreteMaskTag = "is_discrete_mask";
+    op->setAttr(isDiscreteMaskTag, rewriter.getUnitAttr());
 
-      if (!offsetMap.contains(dst)) {
-        return failure();
-      }
-
-      auto &info = offsetMap[dst];
-      Value basePtr  = info.getPtr();
-      Value totalOffset = info.getOffset();
-
-      rewriter.create<triton::ascend::IndirectStoreOp>(loc, basePtr, totalOffset, src, mask);
-      rewriter.eraseOp(op);
-      return success();
-    }
+    if (compileOn91095Flag && forceSimtTemplateFlag)
+      return failure();
 
     // When mask = contMask & discMask, use contMask to bound GM accesses and
     // discMask to select the final per-element value. This prevents the

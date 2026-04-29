@@ -295,6 +295,38 @@ def _save_npuir_debug_output(stdout_bytes: bytes, stderr_bytes: bytes, tmpdir: s
     )
 
 
+def try_compile_with_config(linalg: str, ub_config: Dict[str, Any], metadata: dict, opt) -> Tuple[bool, str]:
+    """
+    Try to compile with given UB config, return (success, error_msg).
+    If compilation fails due to UB overflow or other errors, returns (False, error_msg).
+    If compilation succeeds, returns (True, "").
+    """
+    # Must import from ubtuner.py - this is the single source of truth
+    from triton.backends.ascend.runtime.ubtuner import UB_TO_NPU_OPTION_MAP
+    option_mapping = UB_TO_NPU_OPTION_MAP
+
+    metadata = dict(metadata)
+
+    for ub_key, meta_key in option_mapping.items():
+        if ub_key in ub_config:
+            metadata[meta_key] = ub_config[ub_key]
+
+    # Choose compile function based on options
+    if opt.compile_on_910_95:
+        compile_func = linalg_to_bin_enable_npu_compile_910_95
+    else:
+        compile_func = linalg_to_bin_enable_npu_compile_A2_A3
+
+    try:
+        compile_func(linalg, metadata, opt)
+        return (True, "")
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr.decode('utf-8') if e.stderr else str(e)
+        return (False, error_msg)
+    except Exception as e:
+        return (False, str(e))
+
+
 def linalg_to_bin_enable_npu_compile_910_95(linalg: str, metadata, opt):
     linalg, metadata = _parse_linalg_metadata(linalg, metadata)
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -320,6 +352,30 @@ def linalg_to_bin_enable_npu_compile_910_95(linalg: str, metadata, opt):
                 multi_buffer_value = False
             _compile_option_list += [
                 f"--enable-auto-multi-buffer={multi_buffer_value}",
+            ]
+        
+        storage_align = metadata["storage_align"]
+        if storage_align is not None:
+            _compile_option_list += [
+                f"--enable-hivm-auto-storage-align={storage_align}",
+            ]
+        
+        ops_reorder = metadata["ops_reorder"]
+        if ops_reorder is not None:
+            _compile_option_list += [
+                f"--enable-ops-reorder={ops_reorder}",
+            ]
+ 
+        vf_fusion_mode = metadata["vf_fusion_mode"]
+        if vf_fusion_mode is not None:
+            _compile_option_list += [
+                f"--vf-fusion-mode={vf_fusion_mode}",
+            ]
+ 
+        code_motion = metadata["code_motion"]
+        if code_motion is not None:
+            _compile_option_list += [
+                f"--enable-code-motion={code_motion}",
             ]
 
         disable_tightly_coupled_buffer_reuse = metadata["disable_tightly_coupled_buffer_reuse"]
@@ -471,7 +527,7 @@ def linalg_to_bin_enable_npu_compile_910_95(linalg: str, metadata, opt):
         if hfusion_enable_multiple_consumer_fusion:
             cmd_list += [f"--hfusion-enable-multiple-consumer-fusion={hfusion_enable_multiple_consumer_fusion}"]
 
-        if opt.debug:
+        if opt.debug or os.getenv("TRITON_PRINT_AUTOTUNING", None) == "1":
             print(f"[DEBUG] cmd_list: {' '.join(cmd_list)}")
 
         try:
@@ -547,6 +603,30 @@ def linalg_to_bin_enable_npu_compile_A2_A3(linalg: str, metadata, opt):
         if enable_ubuf_saving is not None:
             _compile_option_list += [
                 f"--enable-ubuf-saving={enable_ubuf_saving}",
+            ]
+        
+        storage_align = metadata["storage_align"]
+        if storage_align is not None:
+            _compile_option_list += [
+                f"--enable-hivm-auto-storage-align={storage_align}",
+            ]
+        
+        ops_reorder = metadata["ops_reorder"]
+        if ops_reorder is not None:
+            _compile_option_list += [
+                f"--enable-ops-reorder={ops_reorder}",
+            ]
+ 
+        vf_fusion_mode = metadata["vf_fusion_mode"]
+        if vf_fusion_mode is not None:
+            _compile_option_list += [
+                f"--vf-fusion-mode={vf_fusion_mode}",
+            ]
+ 
+        code_motion = metadata["code_motion"]
+        if code_motion is not None:
+            _compile_option_list += [
+                f"--enable-code-motion={code_motion}",
             ]
 
         _compile_option_list += [
@@ -668,7 +748,7 @@ def linalg_to_bin_enable_npu_compile_A2_A3(linalg: str, metadata, opt):
             + _compile_option_list
             + ["-o", bin_file]
         )
-        if opt.debug:
+        if opt.debug or os.getenv("TRITON_PRINT_UBTUNING", None) == "1":
             print(f"[DEBUG] cmd_list: {' '.join(cmd_list)}")
 
         try:
@@ -753,6 +833,10 @@ class NPUOptions:
     bisheng_options: str = "-cce-link-aicore-ll-module " + get_libdevice()
 
     multibuffer: bool = not is_compile_on_910_95
+    storage_align: bool = None
+    ops_reorder: bool = None
+    code_motion: bool = None
+    vf_fusion_mode: str = None
     enable_ubuf_saving: bool = None
     enable_auto_bind_sub_block: bool = None
     disable_tightly_coupled_buffer_reuse: bool = False

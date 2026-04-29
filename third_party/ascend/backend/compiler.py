@@ -188,7 +188,7 @@ def _parse_linalg_metadata(linalg: str, metadata: dict):
       - kernel_name
       - tensor_kinds
       - shared (currently hardcoded)
-      - name (combined kernel_name and mix_mode)
+      - name (kernel_name)
 
     Additionally, removes the mix_mode attribute from the IR.
     """
@@ -220,9 +220,8 @@ def _parse_linalg_metadata(linalg: str, metadata: dict):
     metadata["mix_mode"] = re.search(MIX_MODE_REGEX, linalg).group(1)
     metadata["parallel_mode"] = re.search(PARALLEL_MODE_REGEX, linalg).group(1)
     metadata["kernel_name"] = re.search(KERNEL_NAME_REGEX, linalg).group(1)
-    # Use while "_" to split kernel_name and mix_mode.
     # Check the function load_binary in npu_driver.py.
-    metadata["name"] = metadata["kernel_name"] + "_" + metadata["mix_mode"]
+    metadata["name"] = metadata["kernel_name"]
     # Parse all tensor kinds from arguments
     metadata["tensor_kinds"] = [int(kind) for _, kind in re.findall(TENSOR_KIND_REGEX, linalg)]
     # init the ub bits of triton kernel for inductor autotune using
@@ -254,7 +253,7 @@ def _parse_ttir_metadata(ttir: str, metadata: dict):
     # Note: Currently, for TTIR inputs, we only support vector kernels.
     metadata["mix_mode"] = "aiv"
     metadata["kernel_name"] = re.search(KERNEL_NAME_REGEX, ttir).group(1)
-    metadata["name"] = metadata["kernel_name"] + "_" + metadata["mix_mode"]
+    metadata["name"] = metadata["kernel_name"]
     # Parse all tensor kinds from arguments
     metadata["tensor_kinds"] = [int(kind) for _, kind in re.findall(TENSOR_KIND_REGEX, ttir)]
     return metadata
@@ -1005,7 +1004,7 @@ class AscendBackend(BaseBackend):
         # CANN runtime limits the length of kernel name <= 50.
         # Considering '\n' is appended, thus the real kernel name <= 49.
         KERNEL_NAME_MAX_LEN = 49
-        kernel_name_orig, _ = metadata.name.rsplit("_", 1)
+        kernel_name_orig = metadata.kernel_name
         if len(kernel_name_orig) > KERNEL_NAME_MAX_LEN:
             kernel_name = kernel_name_orig[-KERNEL_NAME_MAX_LEN:]
         else:

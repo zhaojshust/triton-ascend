@@ -567,7 +567,9 @@ class UBTuner(KernelInterface):
 
     def _find_best_config(self, *args: Any, **kwargs: Any) -> UBConfig:
         """Find the best UB config using configured algorithm."""
-        os.environ[_Config.ENV_ENABLE_PRINT_UB_BITS] = 'true'
+        mode = get_mode_choice()
+        _log_debug(f"Using cost mode: {mode}")
+        os.environ[_Config.ENV_ENABLE_PRINT_UB_BITS] = 'true' if mode == _Config.DEFAULT_MODE else 'false'
         try:
             compiled_kernel = self.fn.run(*args, **kwargs)
             linalg_ir = compiled_kernel.asm.get('ttadapter') if hasattr(compiled_kernel, 'asm') else None
@@ -581,9 +583,6 @@ class UBTuner(KernelInterface):
                 return UBConfig()
 
             available_options = list(UB_OPTION_METADATA.keys())
-            mode = get_mode_choice()
-
-            _log_debug(f"Using cost mode: {mode}")
 
             benefit_cost = self._get_benefit_cost(mode, available_options, args, kwargs, npu_options)
         finally:

@@ -617,12 +617,6 @@ def linalg_to_bin_enable_npu_compile_A2_A3(linalg: str, metadata, opt):
                 f"--enable-ops-reorder={ops_reorder}",
             ]
  
-        vf_fusion_mode = metadata["vf_fusion_mode"]
-        if vf_fusion_mode is not None:
-            _compile_option_list += [
-                f"--vf-fusion-mode={vf_fusion_mode}",
-            ]
- 
         code_motion = metadata["code_motion"]
         if code_motion is not None:
             _compile_option_list += [

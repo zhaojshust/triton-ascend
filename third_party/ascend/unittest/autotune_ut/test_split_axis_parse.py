@@ -20,10 +20,11 @@
 
 import unittest.mock as mock
 
+import pytest
+from test_common import check_axes_parse_res, mock_autotuner
+
 import triton
 import triton.language as tl
-
-from test_common import check_axes_parse_res, mock_autotuner
 
 
 def test_split_axis_parse_base_case1(mock_autotuner):
@@ -31,7 +32,7 @@ def test_split_axis_parse_base_case1(mock_autotuner):
 
     @triton.autotune(
         configs=[],
-        key=["n_elements"]
+        key=["n_elements"],
     )
     @triton.jit
     def triton_split_axis_parse_base_case1(
@@ -67,7 +68,7 @@ def test_split_axis_parse_base_case2(mock_autotuner):
 
     @triton.autotune(
         configs=[],
-        key=["n_elements"]
+        key=["n_elements"],
     )
     @triton.jit
     def triton_split_axis_parse_base_case2(
@@ -102,7 +103,7 @@ def test_split_axis_parse_base_case3(mock_autotuner):
     
     @triton.autotune(
         configs=[],
-        key=["n_elements"]
+        key=["n_elements"],
     )
     @triton.jit
     def triton_split_axis_parse_base_case3(
@@ -135,15 +136,15 @@ def test_grid_stride_loop_block_only_tiling_semantics(mock_autotuner):
 
     @triton.autotune(
         configs=[],
-        key=["N", "index_len"]
+        key=["N", "index_len"],
     )
     @triton.jit
     def triton_grid_stride_loop_block_only_tiling_semantics(
         input_ptr,
         output_ptr,
         index_ptr,
-        N: tl.constexpr,
-        index_len: tl.constexpr,
+        N,
+        index_len,
         BLOCK_M: tl.constexpr,
         BLOCK_N: tl.constexpr,
     ):
@@ -162,6 +163,44 @@ def test_grid_stride_loop_block_only_tiling_semantics(mock_autotuner):
                 selected = tl.load(input_ptr + inp_offset, mask=col_mask[None, :], other=0.0)
                 tl.store(output_ptr + out_offset, selected, mask=col_mask[None, :])
 
+    ref_res = {
+        "keys": {"x": "N", "y": "index_len"},
+        "split_params": {},
+        "tiling_params": {"y": "BLOCK_M", "x": "BLOCK_N"},
+        "low_dim_axes": ["x"],
+        "reduction_axes": [],
+    }
     act_res = triton_grid_stride_loop_block_only_tiling_semantics[(1, 1)]()
-    assert act_res["split_params"] == {}
-    assert act_res["tiling_params"] == {"y": "BLOCK_M", "x": "BLOCK_N"}
+    check_axes_parse_res(act_res, ref_res)
+
+
+@pytest.mark.parametrize("kernel_type", ["vector", "auto"])
+def test_split_axis_parse_kernel_type_vector_auto_consistency(mock_autotuner, kernel_type):
+    import triton.backends.ascend.runtime
+
+    @triton.autotune(
+        configs=[],
+        key=["n_elements"],
+        hints={"kernel_type": kernel_type},
+    )
+    @triton.jit
+    def triton_split_axis_parse_kernel_type_vector_auto_consistency(
+        x_ptr, y_ptr, output_ptr, n_elements, BLOCK_SIZE: tl.constexpr
+    ):
+        block_start = tl.program_id(axis=0) * BLOCK_SIZE
+        offsets = block_start + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < n_elements
+        x = tl.load(x_ptr + offsets, mask=mask)
+        y = tl.load(y_ptr + offsets, mask=mask)
+        tl.store(output_ptr + offsets, x + y, mask=mask)
+
+    ref_res = {
+        "keys": {"x": "n_elements"},
+        "split_params": {"x": "BLOCK_SIZE"},
+        "tiling_params": {},
+        "low_dim_axes": ["x"],
+        "reduction_axes": [],
+    }
+    grid = lambda meta: (meta["BLOCK_SIZE"],)
+    act_res = triton_split_axis_parse_kernel_type_vector_auto_consistency[grid]()
+    check_axes_parse_res(act_res, ref_res)

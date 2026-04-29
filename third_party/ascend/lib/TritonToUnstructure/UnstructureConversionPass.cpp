@@ -349,8 +349,11 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
     os << "forceSimtTemplateFlag: " << forceSimtTemplateFlag << "\n";
   });
 
+  bool rankWithinIndirectFastPathLimit = resultShape.size() <= 5;
   // Fast path on A5: rewrite tt.load/store to tt.indirect_load/store directly.
-  if (compileOn91095Flag && forceSimtTemplateFlag && (ptrOffsetInfo.isUnstructuredOrScalarlike() || isDiscreteMask)) {
+  if (compileOn91095Flag && forceSimtTemplateFlag &&
+      (ptrOffsetInfo.isUnstructuredOrScalarlike() || isDiscreteMask) &&
+      rankWithinIndirectFastPathLimit) {
     if constexpr (std::is_same_v<MemAccOpTy, triton::LoadOp>) {
       assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
       Value mask = op.getMask();
@@ -388,6 +391,16 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
       return success();
     }
   }
+
+  LLVM_DEBUG({
+    if (compileOn91095Flag && forceSimtTemplateFlag &&
+        (ptrOffsetInfo.isUnstructuredOrScalarlike() || isDiscreteMask) &&
+        !rankWithinIndirectFastPathLimit) {
+      auto &os = llvm::dbgs();
+      os << "Skip tt.indirect_load/store fast path because rank is "
+         << resultShape.size() << " (>5)\n";
+    }
+  });
 
   Value iterArg = nullptr;
 

@@ -25,8 +25,9 @@ This module implements heuristic pruning strategies to reduce the search space
 by filtering out invalid or suboptimal configurations.
 """
 
-import torch
 from typing import Dict, Tuple
+
+import torch
 
 from ..hardware_consts import HardwareConstraints
 from ..normalization.param_normalizer import ParamNameNormalizer

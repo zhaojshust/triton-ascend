@@ -214,7 +214,6 @@ class CvAutotuneParam:
         This should eventually infer axis-to-parameter mapping from dot sites.
         It currently returns an empty dict and is left for future work.
         """
-        # TODO: Infer split_params from dot sites.
         return {}
 
     @property

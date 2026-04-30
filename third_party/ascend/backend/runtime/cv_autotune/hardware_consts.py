@@ -49,8 +49,7 @@ class HardwareConstraints:
         ub_size: Unified Buffer size in bytes
     """
 
-    # ArchType : A2
-    # L0 cache sizes (in bytes) - for matrix operands
+    # Default ArchType : A2/A3
     l0a_size: int = 64 * 1024   # 64 KB - for matrix A
     l0b_size: int = 64 * 1024   # 64 KB - for matrix B
     l0c_size: int = 128 * 1024   # 128 KB - for matrix C

@@ -26,22 +26,19 @@ all possible tile configurations for CV fusion operators based on
 CvParseResult.
 """
 
+# Types used to describe the search space.
+from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
-
-from triton.runtime.autotuner import Config
 
 import torch
 
-from ..hardware_consts import HardwareConstraints, get_default_hardware_constraints
-from ...dsl_analysis.schema import (
-    AXIS_LENGTH_STATE_TUNABLE,
-    CvAxisLengthInfo,
-    CvParseResult,
-)
-from ..pruning.heuristic_pruner import HeuristicPruner
+from triton.runtime.autotuner import Config
 
-# Types used to describe the search space.
-from dataclasses import dataclass
+from ...dsl_analysis.schema import (AXIS_LENGTH_STATE_TUNABLE,
+                                    CvAxisLengthInfo, CvParseResult)
+from ..hardware_consts import (HardwareConstraints,
+                               get_default_hardware_constraints)
+from ..pruning.heuristic_pruner import HeuristicPruner
 
 ParamType = Literal["NUM", "ENUM", "BOOL"]
 

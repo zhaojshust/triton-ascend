@@ -1144,8 +1144,32 @@ class AutoTilingTuner(Autotuner):
     def _vv_result_has_resolved_axes(vv_result) -> bool:
         if vv_result is None:
             return False
-        axis_count = getattr(vv_result, "axis_count", 0)
-        return isinstance(axis_count, int) and axis_count > 0
+        semantic_fields = (
+            "axis_length_exprs",
+            "inferred_keys",
+            "split_params",
+            "tiling_params",
+            "fixed_tiling_exprs",
+            "axis_pid_dims",
+        )
+        for field_name in semantic_fields:
+            field_value = getattr(vv_result, field_name, None)
+            if isinstance(field_value, dict) and field_value:
+                return True
+
+        for axis_info in list(getattr(vv_result, "axes", []) or []):
+            if getattr(axis_info, "length_expr", None):
+                return True
+            if getattr(axis_info, "split_param", None):
+                return True
+            if getattr(axis_info, "tiling_param", None):
+                return True
+            if getattr(axis_info, "fixed_tiling_expr", None):
+                return True
+            if getattr(axis_info, "tunable_param", None):
+                return True
+
+        return False
 
     def _infer_hints_axes_from_key(
         self,

@@ -1659,7 +1659,7 @@ def _choose_best_site_evidence(
                 best_confidence = confidence
         return (best_source_score, best_confidence)
 
-    def _score(site: Dict[int, _SemanticAxisEvidence]) -> Tuple[int, int, int, float]:
+    def _score(site: Dict[int, _SemanticAxisEvidence]) -> Tuple[int, int, float, int]:
         axis_count = len(site)
         resolved_extent_axes = sum(
             1 for evidence in site.values() if len(evidence.extent_candidates) > 0
@@ -1671,10 +1671,10 @@ def _choose_best_site_evidence(
             _best_extent_quality(evidence)[1] for evidence in site.values()
         )
         return (
-            axis_count,
             resolved_extent_axes,
             extent_quality_score,
             extent_confidence_score,
+            axis_count,
         )
 
     best = site_evidences[0]

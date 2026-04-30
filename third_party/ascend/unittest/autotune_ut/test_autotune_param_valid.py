@@ -668,6 +668,62 @@ def silu_like_kernel(
     assert result.fixed_tiling_exprs == {"y": "BLOCK_SIZE_N"}
 
 
+def test_parse_vv_axis_info_v2_prefers_extent_resolved_site_for_binned_copy_pattern():
+    from triton.backends.ascend.runtime.dsl_analysis.vv_param_parser_v2 import (
+        parse_vv_axis_info_v2,
+    )
+
+    func_ast = ast.parse(
+        """
+def binned_copy_like_kernel(
+    x,
+    grad,
+    wgrad,
+    num_experts,
+    expert_capacity,
+    indices,
+    bins,
+    NUM_COLUMNS: tl.constexpr,
+    TOP_K: tl.constexpr,
+    BLOCK_X: tl.constexpr,
+):
+    expert_idx = tl.program_id(0)
+    entry_idx = tl.program_id(1)
+    start = 0
+    if expert_idx > 0:
+        start = tl.load(bins + expert_idx - 1)
+    end = tl.load(bins + expert_idx)
+    num_tokens = end - start
+    if entry_idx >= num_tokens:
+        return
+    index_out = tl.load(indices + start + entry_idx)
+    wgrad += index_out
+    grad += tl.multiple_of((index_out // TOP_K) * NUM_COLUMNS, NUM_COLUMNS)
+    offsets = tl.max_contiguous(tl.arange(0, BLOCK_X), BLOCK_X)
+    acc = tl.zeros((BLOCK_X,), dtype=tl.float32)
+    iterations = tl.cdiv(NUM_COLUMNS, BLOCK_X)
+    for _ in range(iterations):
+        mask = offsets < NUM_COLUMNS
+        data = tl.load(x + offsets, mask=mask).to(tl.float32)
+        scale = tl.load(grad + offsets, mask=mask).to(tl.float32)
+        acc += data * scale
+        offsets += BLOCK_X
+    out = tl.sum(acc).to(wgrad.dtype.element_ty)
+    tl.store(wgrad, out)
+"""
+    ).body[0]
+
+    result = parse_vv_axis_info_v2(
+        func_ast,
+        provided_args={"NUM_COLUMNS": 1536, "TOP_K": 4},
+        hints={"vv_parser_v2_mode": "assist"},
+    )
+
+    assert result.axis_length_exprs == {"x": "NUM_COLUMNS"}
+    assert result.tiling_params == {"x": "BLOCK_X"}
+    assert result.low_dim_axes == ["x"]
+
+
 def test_vector_axes_materialize_axis_sizes_prefers_fixed_tiling_expr_for_non_split_axis():
     vector_axes_module = _load_vector_axes_module()
     vector_axes = vector_axes_module.VectorAxes.from_hints_axes(

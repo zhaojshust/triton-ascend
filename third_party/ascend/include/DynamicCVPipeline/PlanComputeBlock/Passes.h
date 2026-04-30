@@ -29,15 +29,6 @@
 namespace mlir {
 namespace triton {
 
-class PlanVectorBlockPass : public PassWrapper<PlanVectorBlockPass, OperationPass<ModuleOp>> {
-public:
-    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PlanVectorBlockPass)
-
-    PlanVectorBlockPass() = default;
-
-    void runOnOperation() override;
-};
-
 std::unique_ptr<OperationPass<ModuleOp>> createPlanVectorBlockPass();
 
 } // namespace triton

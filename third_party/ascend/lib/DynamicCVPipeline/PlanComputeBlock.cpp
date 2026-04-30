@@ -30,8 +30,8 @@
 using namespace mlir;
 using namespace triton;
 
-#define DEBUG_TYPE "plan-compute-block"
-#define LOG_DEBUG(msg) LLVM_DEBUG(llvm::dbgs() << " [" << DEBUG_TYPE << "] " << (msg) << "\n")
+static constexpr const char *DEBUG_TYPE = "plan-compute-block";
+#define LOG_DEBUG(...) LLVM_DEBUG(llvm::dbgs() << " [" << DEBUG_TYPE << "] " << __VA_ARGS__)
 
 // Run the pass
 void PlanComputeBlockPass::runOnOperation()
@@ -39,7 +39,7 @@ void PlanComputeBlockPass::runOnOperation()
     ModuleOp module = getOperation();
     OpPassManager pm(module.getOperationName());
     CVPipeline::ComputeBlockIdManager::getInstance().reset();
-    LOG_DEBUG("Enter pass.");
+    LOG_DEBUG("Enter pass.\n");
 
     // Step 1: Run OpClassifierPass to classify operations
     pm.addPass(createOpClassifierPass());
@@ -56,7 +56,7 @@ void PlanComputeBlockPass::runOnOperation()
         signalPassFailure();
     }
 
-    LOG_DEBUG("Process successfully");
+    LOG_DEBUG("Process successfully\n");
 }
 namespace mlir {
 namespace triton {

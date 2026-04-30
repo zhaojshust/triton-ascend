@@ -35,7 +35,6 @@
 // all prior writers/readers and become the sole writer for every slot.
 
 #include "ascend/include/DynamicCVPipeline/Common/MemoryEffectsTracker.h"
-
 #include "mlir/IR/Block.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpDefinition.h"
@@ -46,8 +45,8 @@
 #include "llvm/Support/Debug.h"
 
 using namespace mlir;
-#define DEBUG_TYPE "memory-effects-tracker"
-#define LOG_DEBUG(msg) LLVM_DEBUG(llvm::dbgs() << " [" << DEBUG_TYPE << "] " << msg)
+static constexpr const char *DEBUG_TYPE = "memory-effects-tracker";
+#define LOG_DEBUG(...) LLVM_DEBUG(llvm::dbgs() << " [" << DEBUG_TYPE << "] " << __VA_ARGS__)
 
 using namespace mlir::CVPipeline;
 

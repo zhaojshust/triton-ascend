@@ -4,27 +4,12 @@
 namespace mlir {
 namespace CVPipeline {
 
-const char *literalCoreType(CoreType ct)
-{
-    switch (ct) {
-        case VECTOR_ONLY:
-            return "VECTOR_ONLY";
-        case CUBE_ONLY:
-            return "CUBE_ONLY";
-        case CUBE_AND_VECTOR:
-            return "CUBE_AND_VECTOR";
-        case UNDETERMINED:
-            return "UNDETERMINED";
-    }
-    return "UNKNOWN";
-}
-
-CoreType lookupOpCoreType(Operation *op)
+CoreType getOpCoreType(Operation *op)
 {
     if (!op) {
         return UNDETERMINED;
     }
-    if (auto a = op->getAttrOfType<StringAttr>(attr::kCoreType)) {
+    if (auto a = op->getAttrOfType<StringAttr>(kCoreType)) {
         return fromStrCoreType(a.getValue());
     }
     return UNDETERMINED;

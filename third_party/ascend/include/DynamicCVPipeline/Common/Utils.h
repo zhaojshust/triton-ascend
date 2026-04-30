@@ -1,17 +1,36 @@
+/*
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
 #ifndef ADD_AUTO_SCHEDULING_COMMON_UTILS_H
 #define ADD_AUTO_SCHEDULING_COMMON_UTILS_H
+#include <string_view>
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/StringRef.h"
-#include <string_view>
 
 namespace mlir {
 namespace CVPipeline {
 
-// Attribute names for block ID management
-namespace attr {
 inline constexpr llvm::StringLiteral kCoreType = "ssbuffer.core_type";
-} // namespace attr
 
 enum CoreType {
     UNDETERMINED = 0,
@@ -20,20 +39,6 @@ enum CoreType {
     CUBE_AND_VECTOR = VECTOR_ONLY | CUBE_ONLY,
 };
 
-inline constexpr std::string_view toStrCoreType(CoreType a)
-{
-    switch (a) {
-        case CoreType::VECTOR_ONLY:
-            return "VECTOR";
-        case CoreType::CUBE_ONLY:
-            return "CUBE";
-        case CoreType::CUBE_AND_VECTOR:
-            return "CUBE_AND_VECTOR";
-        case CoreType::UNDETERMINED:
-        default:
-            return "UNDETERMINED";
-    }
-}
 inline constexpr CoreType fromStrCoreType(std::string_view s)
 {
     if (s == "VECTOR") {
@@ -47,8 +52,7 @@ inline constexpr CoreType fromStrCoreType(std::string_view s)
 }
 
 // Functions for managing core types
-CoreType lookupOpCoreType(Operation *op);
-const char *literalCoreType(CoreType ct);
+CoreType getOpCoreType(Operation *op);
 } // namespace CVPipeline
 } // namespace mlir
 

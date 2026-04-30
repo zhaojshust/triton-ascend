@@ -20,6 +20,8 @@
  * THE SOFTWARE.
  */
 
+#include <algorithm>
+#include <memory>
 #include "ascend/include/DynamicCVPipeline/Common/Utils.h"
 #include "ascend/include/DynamicCVPipeline/PlanComputeBlock/Common.h"
 #include "ascend/include/DynamicCVPipeline/PlanComputeBlock/Passes.h"
@@ -33,20 +35,35 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
-#include <algorithm>
-#include <memory>
 
-#define DEBUG_TYPE "plan-vector-block"
-#define LOG_DEBUG(msg) LLVM_DEBUG(llvm::dbgs() << " [" << DEBUG_TYPE << "] " << msg)
+static constexpr const char *DEBUG_TYPE = "plan-vector-block";
+#define LOG_DEBUG(...) LLVM_DEBUG(llvm::dbgs() << " [" << DEBUG_TYPE << "] " << __VA_ARGS__)
 
 using namespace mlir;
 using namespace triton;
 
+namespace mlir {
+namespace triton {
+class PlanVectorBlockPass : public PassWrapper<PlanVectorBlockPass, OperationPass<ModuleOp>> {
+public:
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PlanVectorBlockPass)
+
+    PlanVectorBlockPass() = default;
+    void runOnOperation() override;
+
+    llvm::StringRef getArgument() const final
+    {
+      return "plan-vector-block";
+    }
+};
+
 bool isFusableOp(Operation *op)
 {
-    if (CVPipeline::lookupOpCoreType(op) == CVPipeline::CoreType::VECTOR_ONLY) {
-        if (isa<scf::ForOp>(op) || isa<scf::IfOp>(op) || isa<scf::WhileOp>(op)) {
+    if (CVPipeline::getOpCoreType(op) == CVPipeline::CoreType::VECTOR_ONLY) {
+        if (isa<RegionBranchOpInterface>(op)) {
+            // pass control ops like scf::ForOp/scf::IfOp/scf::WhileOp
             return false;
         }
         if (op == op->getBlock()->getTerminator()) {
@@ -163,8 +180,7 @@ void findCandidates(DenseMap<Operation *, int> &indegree, SmallVector<Operation 
     // 1. if no candidate, try to bypass non-fusable
     LOG_DEBUG("Finding source ops............\n");
     if (candidates.empty()) {
-        LOG_DEBUG("No candidates available, try bypass"
-                  << "\n");
+        LOG_DEBUG("No candidates available, try bypass\n");
         byPassNonFusable(indegree, candidates, visited, memGraph);
     }
     // 2. find candidates whose indegree is 0 and not visited, add them to candidates and mark visited
@@ -314,7 +330,6 @@ void refineFuseGroup(Block *block, SmallVector<Operation *> &nowFuseGroup, Dense
 {
     // 1.Find ops in fuse group whose next node is a non-fusable (CUBE-only) op
     auto toProcess = findOpsAdjacentToCube(block, nowFuseGroup, visited, memGraph);
-
     // 2. early return: if cannot find one node which next node is CUBE, need to check if return or not;
     if (toProcess.empty()) {
         findCandidates(indegree, candidates, visited, memGraph);
@@ -332,7 +347,7 @@ void refineFuseGroup(Block *block, SmallVector<Operation *> &nowFuseGroup, Dense
 }
 
 // Main function to plan vector block id for one block
-void planVectorBlockId(Block *block, const CVPipeline::MemoryDependenceGraph &memGraph)
+llvm::LogicalResult planVectorBlockId(Block *block, const CVPipeline::MemoryDependenceGraph &memGraph)
 {
     // 1. topo initialize
     llvm::DenseMap<Operation *, int> indegree;
@@ -367,18 +382,16 @@ void planVectorBlockId(Block *block, const CVPipeline::MemoryDependenceGraph &me
             refineFuseGroup(block, nowFuseGroup, visited, queue, indegree, memGraph);
 
             auto &bm = CVPipeline::ComputeBlockIdManager::getInstance();
-            bm.markOpsWithNewId(nowFuseGroup);
+            if (llvm::failed(bm.markOpsWithNewId(nowFuseGroup))) {
+                return llvm::failure();
+            }
             nowFuseGroup.clear();
             // reset queue
             findCandidates(indegree, queue, visited, memGraph);
         }
     }
+    return llvm::success();
 }
-
-// namespace
-
-namespace mlir {
-namespace triton {
 
 void PlanVectorBlockPass::runOnOperation()
 {
@@ -389,7 +402,13 @@ void PlanVectorBlockPass::runOnOperation()
 
     // 2. search blocks in topo order and assign block id for each block
     llvm::SmallVector<Block *> blocks;
-    module.walk([&](Block *block) { planVectorBlockId(block, memDepGraph); });
+    module.walk([&](Block *block) {
+        if (llvm::failed(planVectorBlockId(block, memDepGraph))) {
+            module.emitError() << "[" << DEBUG_TYPE << "] Failed to plan vector block id for block";
+            signalPassFailure();
+            return;
+        }
+    });
 }
 
 std::unique_ptr<OperationPass<ModuleOp>> createPlanVectorBlockPass()

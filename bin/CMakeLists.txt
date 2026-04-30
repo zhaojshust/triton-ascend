@@ -2,6 +2,11 @@ get_property(dialect_libs GLOBAL PROPERTY MLIR_DIALECT_LIBS)
 get_property(conversion_libs GLOBAL PROPERTY MLIR_CONVERSION_LIBS)
 get_property(triton_libs GLOBAL PROPERTY TRITON_LIBS)
 
+include_directories(
+    ${PROJECT_SOURCE_DIR}/third_party/ascend/AscendNPU-IR/bishengir/include
+    ${PROJECT_BINARY_DIR}/third_party/ascend/AscendNPU-IR/bishengir/include
+  )
+
 add_llvm_executable(triton-opt triton-opt.cpp PARTIAL_SOURCES_INTENDED)
 
 # TODO: what's this?
@@ -16,6 +21,13 @@ target_link_libraries(triton-opt PRIVATE
   ${dialect_libs}
   ${conversion_libs}
   ${triton_libs}
+  # BiShengIR dialects
+  BiShengIRAnnotationDialect
+  BiShengIRHACCDialect
+  BiShengIRHIVMDialect
+  BiShengIRMemRefExtDialect
+  BiShengIRScopeDialect
+  BiShengIRTensorDialect
   # tests
   # TritonTestAnalysis
   # MLIR core
@@ -39,6 +51,13 @@ target_link_libraries(triton-reduce PRIVATE
   ${dialect_libs}
   ${conversion_libs}
   ${triton_libs}
+  # BiShengIR dialects
+  BiShengIRAnnotationDialect
+  BiShengIRHACCDialect
+  BiShengIRHIVMDialect
+  BiShengIRMemRefExtDialect
+  BiShengIRScopeDialect
+  BiShengIRTensorDialect
   # tests
   # TritonTestAnalysis
   # MLIR core
@@ -60,6 +79,13 @@ target_link_libraries(triton-lsp PRIVATE
   ${dialect_libs}
   ${conversion_libs}
   ${triton_libs}
+  # BiShengIR dialects
+  BiShengIRAnnotationDialect
+  BiShengIRHACCDialect
+  BiShengIRHIVMDialect
+  BiShengIRMemRefExtDialect
+  BiShengIRScopeDialect
+  BiShengIRTensorDialect
   # tests
   # TritonTestAnalysis
   # MLIR core
@@ -98,5 +124,12 @@ target_link_libraries(triton-tensor-layout PRIVATE
   ${triton_libs}
   ${conversion_libs}
   ${dialect_libs}
+  # BiShengIR dialects
+  BiShengIRAnnotationDialect
+  BiShengIRHACCDialect
+  BiShengIRHIVMDialect
+  BiShengIRMemRefExtDialect
+  BiShengIRScopeDialect
+  BiShengIRTensorDialect
   # TritonTestAnalysis
   )

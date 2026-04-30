@@ -11,6 +11,12 @@
 // #include "amd/include/Dialect/TritonAMDGPU/IR/Dialect.h"
 // #include "amd/include/TritonAMDGPUTransforms/Passes.h"
 // #include "third_party/nvidia/include/Dialect/NVGPU/IR/Dialect.h"
+
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
+
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
@@ -92,5 +98,11 @@ inline void registerTritonDialects(mlir::DialectRegistry &registry) {
                   mlir::gpu::GPUDialect, mlir::LLVM::LLVMDialect,
                   mlir::NVVM::NVVMDialect, /*mlir::triton::nvgpu::NVGPUDialect,*/
                   /*mlir::triton::amdgpu::TritonAMDGPUDialect,*/
-                  mlir::ROCDL::ROCDLDialect>();
+                  mlir::ROCDL::ROCDLDialect,
+                  mlir::triton::ascend::TritonAscendDialect,
+                  mlir::hivm::HIVMDialect, mlir::scope::ScopeDialect, mlir::hacc::HACCDialect,
+                  mlir::annotation::AnnotationDialect,
+                  mlir::tensor::TensorDialect, mlir::linalg::LinalgDialect,
+                  mlir::memref::MemRefDialect, mlir::bufferization::BufferizationDialect,
+                  mlir::func::FuncDialect>();
 }

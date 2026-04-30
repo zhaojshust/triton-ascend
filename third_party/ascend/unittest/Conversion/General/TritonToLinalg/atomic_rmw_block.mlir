@@ -1,4 +1,4 @@
-// RUN: triton-opt --triton-to-linalg="named-ops=True" --split-input-file %s | FileCheck %s
+// RUN: triton-opt -allow-unregistered-dialect --triton-to-linalg="named-ops=True" --split-input-file %s | FileCheck %s
 
 module attributes {hacc.target = #hacc.target<"Ascend910B2">} {
   tt.func public @moe_align_block_size_stage4(%arg0: !tt.ptr<i32> {tt.divisibility = 16 : i32} , %arg1: !tt.ptr<i32> {tt.divisibility = 16 : i32} , %arg2: !tt.ptr<i32> {tt.divisibility = 16 : i32} , %arg3: !tt.ptr<i32> {tt.divisibility = 16 : i32} , %arg4: !tt.ptr<i32> {tt.divisibility = 16 : i32} , %arg5: i32) attributes {noinline = false} {
@@ -41,6 +41,8 @@ module attributes {hacc.target = #hacc.target<"Ascend910B2">} {
 
 // CHECK-LABEL: func.func @moe_align_block_size_stage4
 
-// CHECK:  %[[CAST1:.*]] = memref.reinterpret_cast %[[.*]] to offset: [%[[.*]]], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1], offset: ?>>
-// CHECK:  %[[CAST2:.*]] = memref.alloc() : memref<1xi32>
-// CHECK:  memref.copy %[[CAST1]], %[[CAST2]] : memref<1xi32, strided<[1], offset: ?>> to memref<1xi32>
+// CHECK:  %[[CAST1:.*]] = memref.reinterpret_cast %[[ARG1:.*]] to offset: [%{{.*}}], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1], offset: ?>>
+// CHECK:  %[[CAST2:.*]] = memref.reinterpret_cast %[[ARG2:.*]] to offset: [%{{.*}}], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1], offset: ?>>
+// CHECK:  %[[CAST3:.*]] = memref.reinterpret_cast %[[ARG3:.*]] to offset: [%{{.*}}], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1], offset: ?>>
+// CHECK:  %[[ALLOC:.*]] = memref.alloc() : memref<1xi32>
+// CHECK-NEXT:  memref.copy %[[CAST3:.*]], %[[ALLOC:.*]] : memref<1xi32, strided<[1], offset: ?>> to memref<1xi32>

@@ -55,6 +55,7 @@ from triton.backends.ascend.utils import (
     downgrade_llir,
     force_disable_ffts,
     triton_enable_libdevice_simt,
+    get_cann_version,
 )
 from triton.backends.ascend.driver import (
     NPUUtils
@@ -941,6 +942,7 @@ class NPUOptions:
 
     def hash(self):
         key = "_".join([f"{name}-{val}" for name, val in self.__dict__.items()])
+        key = "_".join([key, get_cann_version()])
         return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 

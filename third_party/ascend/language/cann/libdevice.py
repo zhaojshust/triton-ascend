@@ -336,6 +336,16 @@ def mul_ru(arg0, arg1, _builder=None):
         }, is_pure=True, _builder=_builder)
 
 @core.extern
+def mul_rd(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.mul_rd for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], {
+            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_mul_rd_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
 def div_rd(arg0, arg1, _builder=None):
     if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
         core.static_print("livdevice.div_rd for simd is unspported for now.")
@@ -345,6 +355,28 @@ def div_rd(arg0, arg1, _builder=None):
             (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_div_rd_fp32", core.dtype("fp32")),
         }, is_pure=True, _builder=_builder)
 
+@core.extern
+def div_ru(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        core.static_print("livdevice.div_ru for simd is unspported for now.")
+        core.static_assert(False)
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], {
+            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_div_ru_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+
+@core.extern
+def div_rz(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        arg0 = semantic.to_tensor(arg0, _builder)
+        arg1 = semantic.to_tensor(arg1, _builder)
+        ret = semantic.fdiv(arg0, arg1, False, _builder)
+        return ret
+    return core.extern_elementwise(
+        "", "", [arg0, arg1], {
+            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_div_rz_fp32", core.dtype("fp32")),
+        }, is_pure=True, _builder=_builder)
+        
 @core.extern
 def rcp_rn(arg0, _builder=None):
     if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
@@ -450,10 +482,15 @@ def fast_expf(arg0, _builder=None):
 
 @core.extern
 def fmod(arg0, arg1, _builder=None):
+    if not (triton_enable_libdevice_simt() and is_compile_on_910_95):
+        arg0 = semantic.to_tensor(arg0, _builder)
+        arg1 = semantic.to_tensor(arg1, _builder)
+        ret = semantic.mod(arg0, arg1, _builder)
+        return ret
     return core.extern_elementwise(
-        "", "", [arg0, arg1], {
-            (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_fmod_fp32", core.dtype("fp32")),
-        }, is_pure=True, _builder=_builder)
+    "", "", [arg0, arg1], {
+        (core.dtype("fp32"), core.dtype("fp32")): ("__hmf_fmod_fp32", core.dtype("fp32")),
+    }, is_pure=True, _builder=_builder)
 
 @core.extern
 def remainder(arg0, arg1, _builder=None):

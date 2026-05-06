@@ -12,7 +12,11 @@
 
 ### Python版本要求
 
-当前 Triton-Ascend 要求的 Python 版本为 **3.9 - 3.11**。
+| Triton-Ascend版本 | Python支持版本 | 备注              |
+|-------------------|----------------------|-----------------|
+| 3.2.1             | py3.9 - py3.13       | py3.9不支持aarch64 |
+| 3.2.0             | py3.9 - py3.11       |                 |
+| 3.2.0rc4          | py3.9 - py3.11       |                 |
 
 ### 安装CANN
 
@@ -31,14 +35,16 @@
 - 商用版
 
 | Triton-Ascend版本 | CANN商用版本 | CANN发布日期 |
-|-------------------|----------------------|--------------------|
-| 3.2.0             | CANN 8.5.0           | 2026/01/16         |
-| 3.2.0rc4          | CANN 8.3.RC2<br>CANN 8.3.RC1         | 2025/11/20<br>2025/10/30         |
+|-------------------|----------------------|-----------------|
+| 3.2.1           | CANN 9.0.0             | 2026/04/30      |
+| 3.2.0             | CANN 8.5.0           | 2026/01/16      |
+| 3.2.0rc4          | CANN 8.3.RC2<br>CANN 8.3.RC1   | 2025/11/20<br>2025/10/30 |
 
 - 社区版
 
-| Triton-Ascend版本 | CANN社区版本 | CANN发布日期 |
+| Triton-Ascend版本   | CANN社区版本 | CANN发布日期 |
 |-------------------|----------------------|--------------------|
+| 3.2.1             | CANN 9.0.0             | 2026/04/30      |
 | 3.2.0             | CANN 8.5.0           | 2026/01/16         |
 | 3.2.0rc4          | CANN 8.3.RC2<br>CANN 8.5.0.alpha001<br>CANN 8.3.RC1         | 2025/11/20<br>2025/11/12<br>2025/10/30         |
 
@@ -68,9 +74,10 @@ pip install torch==2.7.1+cpu --index-url https://download.pytorch.org/whl/cpu
 pip install triton-ascend
 ```
 
-- 注意：社区 Triton 和 Triton-Ascend 不能同时存在。在安装依赖Triton的其他软件时，会自动安装社区 Triton，将覆盖掉已安装的 Triton-Ascend 目录。
-
-此时也需要先卸载社区 Triton 和 Triton-Ascend，再安装 Triton-Ascend。
+- 注意：triton-ascend 3.2.0 及以下 Triton-Ascend和Triton 不能同时存在。需要先卸载社区 Triton，再安装 Triton-Ascend。<br>
+triton-ascend 3.2.1 及以上，Triton-Ascend 通过将 Triton 声明为安装依赖来缓解安装覆盖问题。
+安装 Triton-Ascend 时会先安装社区 Triton，再由 Triton-Ascend 覆盖同名目录，从而避免后续安装其他依赖 Triton 的软件包时再次安装 Triton 而覆盖 Triton-Ascend。
+x86 与 arm 使用不同版本的社区 Triton 安装包的原因是社区从 3.5 版本开始才提供 arm 版本安装包：x86 依赖 triton==3.2.0，arm 依赖 triton==3.5.0。
 
 ```shell
 pip uninstall triton
@@ -253,10 +260,10 @@ triton-ascend/CMakeLists.txt
 
 我们提供了Dockerfile帮助您安装Docker环境镜像。安装过程将会自动从CANN官网中下载安装对应的CANN Toolkit和Kernel包，需要您通过`--build-arg`指定您机器需要安装的CANN相关参数。
 
-| 参数名称 | 默认值 | 可选值                                   |
-| -------- | ------ |---------------------------------------|
-| CHIP_TYPE | A3     | A3、910b                               |
-| CANN_VERSION | 8.5.0（推荐） | 8.5.0、8.3.RC1、8.3.RC2、8.2.RC1、8.2.RC2 |
+| 参数名称 | 默认值       | 可选值                                         |
+| -------- |-----------|---------------------------------------------|
+| CHIP_TYPE | A3        | A3、910b                                     |
+| CANN_VERSION | 9.0.0（推荐） | 9.0.0、8.5.0、8.3.RC1、8.3.RC2、8.2.RC1、8.2.RC2 |
 
 您可以通过 npu-smi 命令查看系统上的NPU型号。
 
@@ -271,7 +278,7 @@ triton-ascend/CMakeLists.txt
 git clone https://gitcode.com/Ascend/triton-ascend.git && cd triton-ascend
 docker build \
 --build-arg CHIP_TYPE=A3 \
---build-arg CANN_VERSION=8.5.0 \
+--build-arg CANN_VERSION=9.0.0 \
 -t triton-ascend-image:latest -f ./docker/Dockerfile .
 ```
 

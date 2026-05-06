@@ -238,6 +238,7 @@ def bc_to_linalg_by_bishengir_opt(bc_data: bytes, metadata, opt):
             [
                 bishengir_opt_path,
                 bc_path,
+                "--mlir-print-debuginfo",
                 "-o",
                 mlir_path,
             ],

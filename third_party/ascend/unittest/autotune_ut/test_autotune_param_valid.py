@@ -18,7 +18,13 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+import ast
+import importlib.util
 import os
+from collections.abc import Sequence
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Dict, List, Optional
 
 import pytest
 import torch
@@ -29,10 +35,723 @@ import triton.backends.ascend.runtime.autotuner as ascend_autotuner
 import triton.language as tl
 
 
+VALID_AXIS_NAMES = ["x", "y", "z", "w", "v", "t", "rx", "ry", "rz", "rw", "rv", "rt"]
+AUTOTUNER_PATH = Path(__file__).resolve().parents[2] / "backend" / "runtime" / "autotuner.py"
+VECTOR_AXES_PATH = Path(__file__).resolve().parents[2] / "backend" / "runtime" / "vector_axes.py"
+
+
+def _load_vector_axes_module():
+    spec = importlib.util.spec_from_file_location("vector_axes_test_runtime", VECTOR_AXES_PATH)
+    module = importlib.util.module_from_spec(spec)
+    import sys
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_autotuner_methods(*method_names):
+    source = AUTOTUNER_PATH.read_text(encoding="utf-8")
+    module = ast.parse(source, filename=str(AUTOTUNER_PATH))
+    class_node = next(
+        node for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "AutoTilingTuner"
+    )
+    selected = [
+        node for node in class_node.body
+        if isinstance(node, ast.FunctionDef) and node.name in set(method_names)
+    ]
+    extracted_module = ast.Module(body=selected, type_ignores=[])
+    ast.fix_missing_locations(extracted_module)
+    namespace = {
+        "Dict": Dict,
+        "List": List,
+        "Optional": Optional,
+        "Sequence": Sequence,
+        "valid_axis_names": VALID_AXIS_NAMES,
+        "VectorAxes": _load_vector_axes_module().VectorAxes,
+    }
+    exec(compile(extracted_module, str(AUTOTUNER_PATH), "exec"), namespace)
+    return namespace
+
+
+def _normalize_loaded_method(method):
+    if isinstance(method, staticmethod):
+        return method.__func__
+    return method
+
+
+def _init_axis_state_for_test(
+    key,
+    *,
+    hints_axes,
+    split_params,
+    tiling_params,
+    low_dim_axes,
+    reduction_axes,
+    enable_vv_parser_v2=False,
+    vv_parser_v2_mode="off",
+):
+    namespace = _load_autotuner_methods(
+        "_parse_hints_axes",
+        "_get_runtime_arg_names_for_hints_axes",
+        "_infer_hints_axes_from_key",
+        "_rebuild_vector_axes",
+        "_get_parser_axis_arg_names",
+        "_is_direct_runtime_length_arg_name",
+        "_init_axis_params",
+    )
+    tuner = SimpleNamespace()
+    tuner.arg_names = ["x_ptr", "n_elements", "BLOCK_SIZE", "BLOCK_SIZE_SUB"]
+    tuner._get_constexpr_candidates = lambda: ["BLOCK_SIZE", "BLOCK_SIZE_SUB"]
+    parse_hints_axes = _normalize_loaded_method(namespace.get("_parse_hints_axes"))
+    if parse_hints_axes is not None:
+        tuner._parse_hints_axes = parse_hints_axes.__get__(tuner, SimpleNamespace)
+    get_runtime_arg_names_for_hints_axes = _normalize_loaded_method(
+        namespace.get("_get_runtime_arg_names_for_hints_axes")
+    )
+    if get_runtime_arg_names_for_hints_axes is not None:
+        tuner._get_runtime_arg_names_for_hints_axes = get_runtime_arg_names_for_hints_axes.__get__(
+            tuner,
+            SimpleNamespace,
+        )
+    rebuild_vector_axes = _normalize_loaded_method(namespace.get("_rebuild_vector_axes"))
+    if rebuild_vector_axes is not None:
+        tuner._rebuild_vector_axes = rebuild_vector_axes.__get__(tuner, SimpleNamespace)
+    infer_hints_axes_from_key = _normalize_loaded_method(namespace.get("_infer_hints_axes_from_key"))
+    if infer_hints_axes_from_key is not None:
+        tuner._infer_hints_axes_from_key = infer_hints_axes_from_key.__get__(tuner, SimpleNamespace)
+    get_parser_axis_arg_names = _normalize_loaded_method(namespace.get("_get_parser_axis_arg_names"))
+    if get_parser_axis_arg_names is not None:
+        tuner._get_parser_axis_arg_names = get_parser_axis_arg_names.__get__(tuner, SimpleNamespace)
+    is_direct_runtime_length_arg_name = _normalize_loaded_method(
+        namespace.get("_is_direct_runtime_length_arg_name")
+    )
+    if is_direct_runtime_length_arg_name is not None:
+        tuner._is_direct_runtime_length_arg_name = is_direct_runtime_length_arg_name
+    tuner.enable_vv_parser_v2 = enable_vv_parser_v2
+    tuner.vv_parser_v2_mode = vv_parser_v2_mode
+    init_axis_params = _normalize_loaded_method(namespace["_init_axis_params"])
+    init_signature = init_axis_params.__code__.co_varnames[:init_axis_params.__code__.co_argcount]
+    if "hints_axes" in init_signature:
+        init_axis_params(
+            tuner,
+            key,
+            split_params,
+            tiling_params,
+            low_dim_axes,
+            reduction_axes,
+            hints_axes,
+        )
+    else:
+        init_axis_params(
+            tuner,
+            key,
+            split_params,
+            tiling_params,
+            low_dim_axes,
+            reduction_axes,
+        )
+    return tuner
+
+
+def test_init_axis_params_keeps_key_as_argument_name_list():
+    tuner = _init_axis_state_for_test(
+        ["n_elements"],
+        hints_axes={"x": "n_elements"},
+        split_params={"x": "BLOCK_SIZE"},
+        tiling_params={"x": "BLOCK_SIZE_SUB"},
+        low_dim_axes=["x"],
+        reduction_axes=[],
+    )
+
+    assert tuner.keys == ["n_elements"]
+    assert tuner.hints_axes == {"x": "n_elements"}
+    assert tuner.axis_arg_names == {"x": "n_elements"}
+
+
+def test_init_axis_params_falls_back_to_key_order_when_hints_axes_missing():
+    tuner = _init_axis_state_for_test(
+        ["n_elements"],
+        hints_axes=None,
+        split_params=None,
+        tiling_params=None,
+        low_dim_axes=None,
+        reduction_axes=None,
+    )
+
+    assert tuner.keys == ["n_elements"]
+    assert tuner.hints_axes == {"x": "n_elements"}
+    assert tuner.vector_axes.axis_length_exprs == {"x": "n_elements"}
+    assert tuner.axis_arg_names == {"x": "n_elements"}
+
+
+def test_init_axis_params_defers_key_fallback_when_vv_assist_without_hints_axes():
+    tuner = _init_axis_state_for_test(
+        ["n_elements"],
+        hints_axes=None,
+        split_params=None,
+        tiling_params=None,
+        low_dim_axes=None,
+        reduction_axes=None,
+        enable_vv_parser_v2=True,
+        vv_parser_v2_mode="assist",
+    )
+
+    assert tuner.keys == ["n_elements"]
+    assert tuner.hints_axes == {}
+    assert tuner.vector_axes.axis_length_exprs == {}
+    assert tuner.axis_arg_names == {}
+
+
+def test_init_axis_params_normalizes_tuple_key():
+    tuner = _init_axis_state_for_test(
+        ("n_elements",),
+        hints_axes={"x": "n_elements"},
+        split_params={"x": "BLOCK_SIZE"},
+        tiling_params={"x": "BLOCK_SIZE_SUB"},
+        low_dim_axes=["x"],
+        reduction_axes=[],
+    )
+
+    assert tuner.keys == ["n_elements"]
+    assert tuner.axis_arg_names == {"x": "n_elements"}
+
+
+def test_init_axis_params_rejects_invalid_hints_axes_name():
+    with pytest.raises(ValueError, match="All keys in 'hints.axes' must be valid axis names"):
+        _init_axis_state_for_test(
+            ["n_elements"],
+            hints_axes={"x0": "n_elements"},
+            split_params={"x": "BLOCK_SIZE"},
+            tiling_params={"x": "BLOCK_SIZE_SUB"},
+            low_dim_axes=["x"],
+            reduction_axes=[],
+        )
+
+
+def test_init_axis_params_rejects_non_string_hints_axes_value():
+    with pytest.raises(ValueError, match="All values in 'hints.axes' must be non-empty argument names"):
+        _init_axis_state_for_test(
+            ["n_elements"],
+            hints_axes={"x": 123},
+            split_params=None,
+            tiling_params=None,
+            low_dim_axes=None,
+            reduction_axes=None,
+        )
+
+
+def test_init_axis_params_rejects_unknown_hints_axes_arg_name():
+    with pytest.raises(ValueError, match="must reference runtime non-constexpr argument names"):
+        _init_axis_state_for_test(
+            ["n_elements"],
+            hints_axes={"x": "unknown_arg"},
+            split_params=None,
+            tiling_params=None,
+            low_dim_axes=None,
+            reduction_axes=None,
+        )
+
+
+def test_init_axis_params_rejects_constexpr_hints_axes_arg_name():
+    with pytest.raises(ValueError, match="must reference runtime non-constexpr argument names"):
+        _init_axis_state_for_test(
+            ["n_elements"],
+            hints_axes={"x": "BLOCK_SIZE"},
+            split_params=None,
+            tiling_params=None,
+            low_dim_axes=None,
+            reduction_axes=None,
+        )
+
+
+def test_init_axis_params_accepts_literal_hints_axes_value():
+    tuner = _init_axis_state_for_test(
+        ["n_elements"],
+        hints_axes={"x": "128"},
+        split_params=None,
+        tiling_params=None,
+        low_dim_axes=None,
+        reduction_axes=None,
+    )
+
+    assert tuner.hints_axes == {"x": "128"}
+    assert tuner.vector_axes.axis_length_exprs == {"x": "128"}
+
+
+def test_init_axis_params_rejects_dict_key():
+    with pytest.raises(ValueError, match="key must be a list"):
+        _init_axis_state_for_test(
+            {"x": "n_elements"},
+            hints_axes={"x": "n_elements"},
+            split_params={"x": "BLOCK_SIZE"},
+            tiling_params={"x": "BLOCK_SIZE_SUB"},
+            low_dim_axes=["x"],
+            reduction_axes=[],
+        )
+
+
+def test_init_axis_params_requires_hints_axes_when_axis_metadata_is_present():
+    with pytest.raises(ValueError, match="hints.axes must be provided when axis metadata"):
+        _init_axis_state_for_test(
+            ["n_elements"],
+            hints_axes=None,
+            split_params={"x": "BLOCK_SIZE"},
+            tiling_params={"x": "BLOCK_SIZE_SUB"},
+            low_dim_axes=["x"],
+            reduction_axes=[],
+        )
+
+
+def test_init_axis_params_rejects_axis_metadata_axes_missing_from_hints_axes():
+    with pytest.raises(ValueError, match="missing from 'hints.axes'"):
+        _init_axis_state_for_test(
+            ["n_elements"],
+            hints_axes={"x": "n_elements"},
+            split_params={"y": "BLOCK_SIZE"},
+            tiling_params={"x": "BLOCK_SIZE_SUB"},
+            low_dim_axes=["x"],
+            reduction_axes=[],
+        )
+
+
+def test_resolve_axis_length_arg_name_uses_internal_axis_map_not_self_keys():
+    namespace = _load_autotuner_methods(
+        "_is_direct_runtime_length_arg_name",
+        "_get_parser_axis_arg_names",
+        "_resolve_axis_length_arg_name",
+    )
+    vector_axes_module = _load_vector_axes_module()
+    tuner = SimpleNamespace(
+        vv_adapter_result_v2=None,
+        enable_vv_parser_v2=False,
+        parser_mode="vector",
+        vector_axes=vector_axes_module.VectorAxes.from_hints_axes({"x": "n_elements"}),
+        axis_arg_names={"x": "n_elements"},
+        keys=["different_cache_key"],
+    )
+    tuner._is_direct_runtime_length_arg_name = _normalize_loaded_method(
+        namespace["_is_direct_runtime_length_arg_name"]
+    )
+    tuner._get_parser_axis_arg_names = _normalize_loaded_method(
+        namespace["_get_parser_axis_arg_names"]
+    ).__get__(tuner, SimpleNamespace)
+
+    result = _normalize_loaded_method(namespace["_resolve_axis_length_arg_name"])(tuner, "x")
+
+    assert result == "n_elements"
+
+
+def test_resolve_axis_length_arg_name_does_not_fallback_to_key_order():
+    namespace = _load_autotuner_methods(
+        "_is_direct_runtime_length_arg_name",
+        "_get_parser_axis_arg_names",
+        "_resolve_axis_length_arg_name",
+    )
+    tuner = SimpleNamespace(
+        vv_adapter_result_v2=None,
+        enable_vv_parser_v2=False,
+        parser_mode="vector",
+        vector_axes=None,
+        axis_arg_names={},
+        keys=["n_elements"],
+    )
+    tuner._is_direct_runtime_length_arg_name = _normalize_loaded_method(
+        namespace["_is_direct_runtime_length_arg_name"]
+    )
+    tuner._get_parser_axis_arg_names = _normalize_loaded_method(
+        namespace["_get_parser_axis_arg_names"]
+    ).__get__(tuner, SimpleNamespace)
+
+    result = _normalize_loaded_method(namespace["_resolve_axis_length_arg_name"])(tuner, "x")
+
+    assert result is None
+
+
+def test_resolve_axis_length_arg_name_uses_hints_axes_when_vv_enabled():
+    namespace = _load_autotuner_methods(
+        "_is_direct_runtime_length_arg_name",
+        "_get_parser_axis_arg_names",
+        "_resolve_axis_length_arg_name",
+    )
+    vector_axes_module = _load_vector_axes_module()
+    tuner = SimpleNamespace(
+        vv_adapter_result_v2=SimpleNamespace(axis_length_exprs={}),
+        enable_vv_parser_v2=True,
+        parser_mode="vector",
+        vector_axes=vector_axes_module.VectorAxes.from_hints_axes({"x": "n_elements"}),
+        axis_arg_names={"x": "n_elements"},
+        keys=["different_cache_key"],
+    )
+    tuner._is_direct_runtime_length_arg_name = _normalize_loaded_method(
+        namespace["_is_direct_runtime_length_arg_name"]
+    )
+    tuner._get_parser_axis_arg_names = _normalize_loaded_method(
+        namespace["_get_parser_axis_arg_names"]
+    ).__get__(tuner, SimpleNamespace)
+
+    result = _normalize_loaded_method(namespace["_resolve_axis_length_arg_name"])(tuner, "x")
+
+    assert result == "n_elements"
+
+
+def test_resolve_axis_length_arg_name_uses_base_vv_axis_expr_for_reduction_axis():
+    namespace = _load_autotuner_methods(
+        "_is_direct_runtime_length_arg_name",
+        "_get_parser_axis_arg_names",
+        "_resolve_axis_length_arg_name",
+    )
+    tuner = SimpleNamespace(
+        vv_adapter_result_v2=SimpleNamespace(axis_length_exprs={"x": "n_elements"}),
+        enable_vv_parser_v2=True,
+        parser_mode="vector",
+        vector_axes=None,
+        axis_arg_names={},
+        keys=[],
+    )
+    tuner._is_direct_runtime_length_arg_name = _normalize_loaded_method(
+        namespace["_is_direct_runtime_length_arg_name"]
+    )
+    tuner._get_parser_axis_arg_names = _normalize_loaded_method(
+        namespace["_get_parser_axis_arg_names"]
+    ).__get__(tuner, SimpleNamespace)
+
+    result = _normalize_loaded_method(namespace["_resolve_axis_length_arg_name"])(tuner, "rx")
+
+    assert result == "n_elements"
+
+
+def test_apply_vv_axis_semantic_result_promotes_internal_axis_map_only():
+    namespace = _load_autotuner_methods(
+        "_normalize_vv_reduction_axes",
+        "_get_parser_axis_arg_names",
+        "_is_direct_runtime_length_arg_name",
+        "_promote_axis_arg_name_to_reduction",
+        "_apply_vv_axis_semantic_result",
+    )
+    vector_axes_module = _load_vector_axes_module()
+    tuner = SimpleNamespace(
+        vv_adapter_result_v2=SimpleNamespace(
+            status="ok",
+            reduction_axes=["x"],
+            low_dim_axes=[],
+            split_params={},
+            tiling_params={},
+            axis_pid_dims={},
+        ),
+        reduction_axes=[],
+        low_dim_axes=[],
+        split_params={},
+        tiling_params={},
+        axis_pid_dims={},
+        vector_axes=vector_axes_module.VectorAxes.from_hints_axes({"x": "n_elements"}),
+        axis_arg_names={"x": "n_elements"},
+        keys=["n_elements"],
+        dual_reduction=False,
+    )
+    tuner._normalize_vv_reduction_axes = _normalize_loaded_method(
+        namespace["_normalize_vv_reduction_axes"]
+    ).__get__(tuner, SimpleNamespace)
+    tuner._get_parser_axis_arg_names = _normalize_loaded_method(
+        namespace["_get_parser_axis_arg_names"]
+    ).__get__(tuner, SimpleNamespace)
+    tuner._is_direct_runtime_length_arg_name = _normalize_loaded_method(
+        namespace["_is_direct_runtime_length_arg_name"]
+    )
+    tuner._promote_axis_arg_name_to_reduction = _normalize_loaded_method(
+        namespace["_promote_axis_arg_name_to_reduction"]
+    ).__get__(
+        tuner,
+        SimpleNamespace,
+    )
+
+    applied = _normalize_loaded_method(namespace["_apply_vv_axis_semantic_result"])(tuner)
+
+    assert applied is True
+    assert tuner.keys == ["n_elements"]
+    assert tuner.axis_arg_names == {"rx": "n_elements"}
+    assert tuner.reduction_axes == ["rx"]
+
+
+def test_generate_key_and_configs_uses_axis_arg_names_for_kv_dict():
+    namespace = _load_autotuner_methods(
+        "_parse_hints_axes",
+        "_get_runtime_arg_names_for_hints_axes",
+        "_rebuild_vector_axes",
+        "_get_parser_axis_arg_names",
+        "_is_direct_runtime_length_arg_name",
+        "_promote_axis_arg_name_to_reduction",
+        "_init_axis_params",
+        "generate_key_and_configs",
+    )
+    captured = {}
+
+    class FakeArg:
+        dtype = "float16"
+
+    def fake_get_byte_per_numel(dtype):
+        return 0 if dtype is None else 1
+
+    namespace["get_byte_per_numel"] = fake_get_byte_per_numel
+
+    tuner = SimpleNamespace(
+        arg_names=["x_ptr", "n_elements"],
+        _get_constexpr_candidates=lambda: [],
+        cache={},
+        auto_gen_config=True,
+        parser_mode="vector",
+        gen_configs=[],
+        user_configs=[],
+        is_simt_mode=False,
+        user_specified_warps=None,
+        user_specified_multibuffer=None,
+        _autoparse_axis_params=lambda all_args: None,
+        _gen_tile_configs=lambda kv_dict, dtype, all_args: captured.update(
+            kv_dict=dict(kv_dict),
+            dtype=dtype,
+            all_args=dict(all_args),
+        ) or setattr(tuner, "gen_configs", [SimpleNamespace(kwargs={"BLOCK_SIZE": 128})]),
+    )
+    tuner._parse_hints_axes = _normalize_loaded_method(namespace["_parse_hints_axes"]).__get__(tuner, SimpleNamespace)
+    tuner._get_runtime_arg_names_for_hints_axes = _normalize_loaded_method(
+        namespace["_get_runtime_arg_names_for_hints_axes"]
+    ).__get__(tuner, SimpleNamespace)
+    tuner._rebuild_vector_axes = _normalize_loaded_method(
+        namespace["_rebuild_vector_axes"]
+    ).__get__(tuner, SimpleNamespace)
+    tuner._get_parser_axis_arg_names = _normalize_loaded_method(
+        namespace["_get_parser_axis_arg_names"]
+    ).__get__(tuner, SimpleNamespace)
+    tuner._is_direct_runtime_length_arg_name = _normalize_loaded_method(
+        namespace["_is_direct_runtime_length_arg_name"]
+    )
+    tuner._promote_axis_arg_name_to_reduction = _normalize_loaded_method(
+        namespace["_promote_axis_arg_name_to_reduction"]
+    ).__get__(tuner, SimpleNamespace)
+
+    _normalize_loaded_method(namespace["_init_axis_params"])(
+        tuner,
+        ["n_elements"],
+        None,
+        None,
+        None,
+        None,
+        {"x": "n_elements"},
+    )
+
+    key = _normalize_loaded_method(namespace["generate_key_and_configs"])(
+        tuner,
+        FakeArg(),
+        17,
+    )
+
+    assert key == (17, "float16")
+    assert captured["kv_dict"] == {"x": 17}
+
+
+def test_generate_key_and_configs_preserves_promoted_reduction_axis_identity():
+    namespace = _load_autotuner_methods(
+        "_parse_hints_axes",
+        "_get_runtime_arg_names_for_hints_axes",
+        "_rebuild_vector_axes",
+        "_get_parser_axis_arg_names",
+        "_is_direct_runtime_length_arg_name",
+        "_promote_axis_arg_name_to_reduction",
+        "_init_axis_params",
+        "generate_key_and_configs",
+    )
+    captured = {}
+
+    class FakeArg:
+        dtype = "float16"
+
+    namespace["get_byte_per_numel"] = lambda dtype: 0 if dtype is None else 1
+
+    tuner = SimpleNamespace(
+        arg_names=["x_ptr", "n_elements"],
+        _get_constexpr_candidates=lambda: [],
+        cache={},
+        auto_gen_config=True,
+        parser_mode="vector",
+        gen_configs=[],
+        user_configs=[],
+        is_simt_mode=False,
+        user_specified_warps=None,
+        user_specified_multibuffer=None,
+        _autoparse_axis_params=lambda all_args: None,
+        _gen_tile_configs=lambda kv_dict, dtype, all_args: captured.update(kv_dict=dict(kv_dict))
+        or setattr(tuner, "gen_configs", [SimpleNamespace(kwargs={"BLOCK_SIZE": 128})]),
+    )
+    tuner._parse_hints_axes = _normalize_loaded_method(namespace["_parse_hints_axes"]).__get__(tuner, SimpleNamespace)
+    tuner._get_runtime_arg_names_for_hints_axes = _normalize_loaded_method(
+        namespace["_get_runtime_arg_names_for_hints_axes"]
+    ).__get__(tuner, SimpleNamespace)
+    tuner._rebuild_vector_axes = _normalize_loaded_method(
+        namespace["_rebuild_vector_axes"]
+    ).__get__(tuner, SimpleNamespace)
+    tuner._get_parser_axis_arg_names = _normalize_loaded_method(
+        namespace["_get_parser_axis_arg_names"]
+    ).__get__(tuner, SimpleNamespace)
+    tuner._is_direct_runtime_length_arg_name = _normalize_loaded_method(
+        namespace["_is_direct_runtime_length_arg_name"]
+    )
+    tuner._promote_axis_arg_name_to_reduction = _normalize_loaded_method(
+        namespace["_promote_axis_arg_name_to_reduction"]
+    ).__get__(tuner, SimpleNamespace)
+
+    _normalize_loaded_method(namespace["_init_axis_params"])(
+        tuner,
+        ["n_elements"],
+        None,
+        None,
+        None,
+        None,
+        {"x": "n_elements"},
+    )
+    tuner._promote_axis_arg_name_to_reduction("x")
+
+    _normalize_loaded_method(namespace["generate_key_and_configs"])(
+        tuner,
+        FakeArg(),
+        23,
+    )
+
+    assert tuner.keys == ["n_elements"]
+    assert captured["kv_dict"] == {"rx": 23}
+
+
+def test_parse_vv_axis_info_v2_collects_fixed_tiling_expr_for_provided_constexpr():
+    from triton.backends.ascend.runtime.dsl_analysis.vv_param_parser_v2 import (
+        parse_vv_axis_info_v2,
+    )
+
+    func_ast = ast.parse(
+        """
+def silu_like_kernel(
+    x,
+    y,
+    stride_row,
+    n_rows,
+    n_cols,
+    BLOCK_SIZE_N: tl.constexpr,
+    BLOCK_SIZE_M: tl.constexpr,
+):
+    pid = tl.program_id(axis=0)
+    grid_size = tl.num_programs(axis=0)
+    num_row_tasks = (n_rows + BLOCK_SIZE_M - 1) // BLOCK_SIZE_M
+    for row_task_id in range(pid, num_row_tasks, grid_size):
+        block_start_row = row_task_id * BLOCK_SIZE_M
+        rows_off = block_start_row + tl.arange(0, BLOCK_SIZE_M)
+        rows_mask = rows_off < n_rows
+        for col_offset in range(0, n_cols, BLOCK_SIZE_N):
+            cols_off = col_offset + tl.arange(0, BLOCK_SIZE_N)
+            cols_mask = cols_off < n_cols
+            block_mask = rows_mask[:, None] & cols_mask[None, :]
+            x_ptrs = x + rows_off[:, None] * stride_row + cols_off[None, :]
+            y_ptrs = y + rows_off[:, None] * stride_row + cols_off[None, :]
+            x_chunk = tl.load(x_ptrs, mask=block_mask, other=0.0)
+            tl.store(y_ptrs, x_chunk, mask=block_mask)
+"""
+    ).body[0]
+
+    result = parse_vv_axis_info_v2(
+        func_ast,
+        provided_args={
+            "n_rows": 4096,
+            "n_cols": 8192,
+            "BLOCK_SIZE_N": 2048,
+        },
+        hints={"vv_parser_v2_mode": "assist"},
+    )
+
+    assert result.axis_length_exprs == {"x": "n_rows", "y": "n_cols"}
+    assert result.fixed_tiling_exprs == {"y": "BLOCK_SIZE_N"}
+
+
+def test_parse_vv_axis_info_v2_prefers_extent_resolved_site_for_binned_copy_pattern():
+    from triton.backends.ascend.runtime.dsl_analysis.vv_param_parser_v2 import (
+        parse_vv_axis_info_v2,
+    )
+
+    func_ast = ast.parse(
+        """
+def binned_copy_like_kernel(
+    x,
+    grad,
+    wgrad,
+    num_experts,
+    expert_capacity,
+    indices,
+    bins,
+    NUM_COLUMNS: tl.constexpr,
+    TOP_K: tl.constexpr,
+    BLOCK_X: tl.constexpr,
+):
+    expert_idx = tl.program_id(0)
+    entry_idx = tl.program_id(1)
+    start = 0
+    if expert_idx > 0:
+        start = tl.load(bins + expert_idx - 1)
+    end = tl.load(bins + expert_idx)
+    num_tokens = end - start
+    if entry_idx >= num_tokens:
+        return
+    index_out = tl.load(indices + start + entry_idx)
+    wgrad += index_out
+    grad += tl.multiple_of((index_out // TOP_K) * NUM_COLUMNS, NUM_COLUMNS)
+    offsets = tl.max_contiguous(tl.arange(0, BLOCK_X), BLOCK_X)
+    acc = tl.zeros((BLOCK_X,), dtype=tl.float32)
+    iterations = tl.cdiv(NUM_COLUMNS, BLOCK_X)
+    for _ in range(iterations):
+        mask = offsets < NUM_COLUMNS
+        data = tl.load(x + offsets, mask=mask).to(tl.float32)
+        scale = tl.load(grad + offsets, mask=mask).to(tl.float32)
+        acc += data * scale
+        offsets += BLOCK_X
+    out = tl.sum(acc).to(wgrad.dtype.element_ty)
+    tl.store(wgrad, out)
+"""
+    ).body[0]
+
+    result = parse_vv_axis_info_v2(
+        func_ast,
+        provided_args={"NUM_COLUMNS": 1536, "TOP_K": 4},
+        hints={"vv_parser_v2_mode": "assist"},
+    )
+
+    assert result.axis_length_exprs == {"x": "NUM_COLUMNS"}
+    assert result.tiling_params == {"x": "BLOCK_X"}
+    assert result.low_dim_axes == ["x"]
+
+
+def test_vector_axes_materialize_axis_sizes_prefers_fixed_tiling_expr_for_non_split_axis():
+    vector_axes_module = _load_vector_axes_module()
+    vector_axes = vector_axes_module.VectorAxes.from_hints_axes(
+        {"x": "n_rows", "y": "n_cols"}
+    )
+    vector_axes.apply_semantic_fields(
+        split_params={"x": "BLOCK_SIZE_M"},
+        low_dim_axes=["y"],
+        fixed_tiling_exprs={"y": "BLOCK_SIZE_N"},
+    )
+
+    axis_sizes, diagnostics = vector_axes.materialize_axis_sizes(
+        {
+            "n_rows": 4096,
+            "n_cols": 8192,
+            "BLOCK_SIZE_N": 2048,
+        }
+    )
+
+    assert axis_sizes == {"x": 4096, "y": 2048}
+    assert diagnostics["y"]["resolved_by"] == "fixed_tiling_expr_arg"
+
+
 @triton.autotune(
     configs=[],
-    key={"x": "n_elements"},
+    key=["n_elements"],
     hints={
+        "axes": {"x": "n_elements"},
         "split_params": {"x": "BLOCK_SIZE"},
         "tiling_params": {"x": "BLOCK_SIZE_SUB"},
         "low_dim_axes": ["x"],
@@ -83,87 +802,113 @@ def test_add(size: int):
 
 @pytest.mark.autotune
 def test_add_no_reduction_axes():
-    try:
+    with pytest.raises(ValueError, match="reduction_axes must be a list"):
         @triton.autotune(
             configs=[],
-            key={"x": "n_elements"},
+            key=["n_elements"],
             hints={
+                "axes": {"x": "n_elements"},
                 "split_params": {"x": "BLOCK_SIZE"},
                 "tiling_params": {"x": "BLOCK_SIZE_SUB"},
                 "low_dim_axes": ["x"],
             }
         )
         @triton.jit
-        def add_kernel_exception():
+        def add_kernel_exception(
+            x_ptr,
+            y_ptr,
+            output_ptr,
+            n_elements,
+            BLOCK_SIZE: tl.constexpr,
+            BLOCK_SIZE_SUB: tl.constexpr,
+        ):
             pass
-    except ValueError as e:
-        assert "reduction_axes must be a list" in str(e)
 
 
 @pytest.mark.autotune
 def test_add_no_low_dim_axes():
-    try:
+    with pytest.raises(ValueError, match="low_dim_axes must be a list"):
         @triton.autotune(
             configs=[],
-            key={"x": "n_elements"},
+            key=["n_elements"],
             hints={
+                "axes": {"x": "n_elements"},
                 "split_params": {"x": "BLOCK_SIZE"},
                 "tiling_params": {"x": "BLOCK_SIZE_SUB"},
                 "reduction_axes": [],
             }
         )
         @triton.jit
-        def add_kernel_exception():
+        def add_kernel_exception(
+            x_ptr,
+            y_ptr,
+            output_ptr,
+            n_elements,
+            BLOCK_SIZE: tl.constexpr,
+            BLOCK_SIZE_SUB: tl.constexpr,
+        ):
             pass
-    except ValueError as e:
-        assert "low_dim_axes must be a list" in str(e)
 
 
 @pytest.mark.autotune
 def test_add_no_tiling_params():
-    try:
+    with pytest.raises(ValueError, match="tiling_params must be a dict"):
         @triton.autotune(
             configs=[],
-            key={"x": "n_elements"},
+            key=["n_elements"],
             hints={
+                "axes": {"x": "n_elements"},
                 "split_params": {"x": "BLOCK_SIZE"},
                 "low_dim_axes": ["x"],
                 "reduction_axes": [],
             }
         )
         @triton.jit
-        def add_kernel_exception():
+        def add_kernel_exception(
+            x_ptr,
+            y_ptr,
+            output_ptr,
+            n_elements,
+            BLOCK_SIZE: tl.constexpr,
+            BLOCK_SIZE_SUB: tl.constexpr,
+        ):
             pass
-    except ValueError as e:
-        assert "tiling_params must be a dict" in str(e)
 
 
 @pytest.mark.autotune
 def test_add_no_split_params():
-    try:
+    with pytest.raises(ValueError, match="split_params must be a dict"):
         @triton.autotune(
             configs=[],
-            key={"x": "n_elements"},
+            key=["n_elements"],
             hints={
+                "axes": {"x": "n_elements"},
                 "tiling_params": {"x": "BLOCK_SIZE_SUB"},
                 "low_dim_axes": ["x"],
                 "reduction_axes": [],
             }
         )
         @triton.jit
-        def add_kernel_exception():
+        def add_kernel_exception(
+            x_ptr,
+            y_ptr,
+            output_ptr,
+            n_elements,
+            BLOCK_SIZE: tl.constexpr,
+            BLOCK_SIZE_SUB: tl.constexpr,
+        ):
             pass
-    except ValueError as e:
-        assert "split_params must be a dict" in str(e)
 
 
 @pytest.mark.autotune
-def test_add_no_keyname():
-    try:
+def test_add_invalid_hints_axes_name():
+    with pytest.raises(ValueError, match="All keys in 'hints.axes' must be valid axis names"):
         @triton.autotune(
             configs=[],
-            key={"x0": "n_elements"},
+            key=["n_elements"],
             hints={
+                "axes": {"x0": "n_elements"},
+                "split_params": {"x": "BLOCK_SIZE"},
                 "tiling_params": {"x": "BLOCK_SIZE_SUB"},
                 "low_dim_axes": ["x"],
                 "reduction_axes": [],
@@ -172,8 +917,6 @@ def test_add_no_keyname():
         @triton.jit
         def add_kernel_exception():
             pass
-    except ValueError as e:
-        assert "All keys in 'key' must be valid axis names" in str(e)
 
 
 def test_expand_explicit_configs_with_hints():
@@ -309,8 +1052,9 @@ def test_expand_hints_coexist_with_axis_hints():
 
     @triton.autotune(
         configs=base_configs,
-        key={"x": "n_elements"},
+        key=["n_elements"],
         hints={
+            "axes": {"x": "n_elements"},
             "split_params": {"x": "BLOCK_SIZE"},
             "tiling_params": {"x": "BLOCK_SIZE_SUB"},
             "low_dim_axes": ["x"],
@@ -332,6 +1076,7 @@ def test_expand_hints_coexist_with_axis_hints():
     assert len(kernel_with_axis_hints.configs) == 8
     assert {cfg.num_stages for cfg in kernel_with_axis_hints.configs} == {1, 2}
     assert kernel_with_axis_hints.hints == {
+        "axes": {"x": "n_elements"},
         "split_params": {"x": "BLOCK_SIZE"},
         "tiling_params": {"x": "BLOCK_SIZE_SUB"},
         "low_dim_axes": ["x"],
@@ -344,7 +1089,7 @@ def test_expand_hints_coexist_with_axis_hints():
 
 
 def test_expand_hints_invalid_key():
-    with pytest.raises(ValueError, match="Invalid hints keys for config expansion"):
+    with pytest.raises(ValueError, match="Unsupported hints keys"):
         @triton.autotune(
             configs=[triton.Config({"BLOCK_SIZE": 128})],
             key=["n_elements"],

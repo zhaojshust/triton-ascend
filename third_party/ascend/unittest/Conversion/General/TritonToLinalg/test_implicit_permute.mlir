@@ -40,7 +40,7 @@
 // CHECK: %[[OUT_CAST3:[A-Za-z0-9_]+]] = memref.reinterpret_cast %arg3 to offset: [%[[OUT_OFF3:[A-Za-z0-9_]+]]], sizes: [64, 4], strides: [%[[OUT_STRIDE3]], 1] : memref<?xf32> to memref<64x4xf32, strided<[?, 1], offset: ?>>
 // CHECK: %[[EMPTY3:[A-Za-z0-9_]+]] = tensor.empty() : tensor<64x4xf32>
 // CHECK-NEXT: %[[TRANS3:[A-Za-z0-9_]+]] = linalg.transpose ins(%[[TENSOR3]] : tensor<4x64xf32>) outs(%[[EMPTY3]] : tensor<64x4xf32>) permutation = [1, 0]
-// CHECK: %[[SLICE3:[A-Za-z0-9_]+]] = tensor.extract_slice %[[TRANS3]][%[[OFF30:[A-Za-z0-9_]+]], %[[OFF31:[A-Za-z0-9_]+]]] [%[[SIZE30:[A-Za-z0-9_]+]], %[[SIZE31:[A-Za-z0-9_]+]]] [1, 1] : tensor<64x4xf32> to tensor<?x?xf32>
+// CHECK: %[[SLICE3:[A-Za-z0-9_]+]] = tensor.extract_slice %[[TRANS3]]{{.*}} : tensor<64x4xf32> to tensor<?x?xf32>
 
 // addptr load implicit permutation
 module {

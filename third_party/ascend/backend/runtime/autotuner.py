@@ -323,11 +323,11 @@ class AutoTilingTuner(Autotuner):
         # Mark the original function so ubtuner can detect autotune was applied
         ori_fn = get_origin_fn(fn)
         setattr(ori_fn, '_triton_autotuned', True)
- 
+
         self.enable_ubtuner = os.getenv("TRITON_ENABLE_UBTUNER", "").lower() in ('compile', 'run') or getattr(ori_fn, '_ubtuned', False)
         if self.enable_ubtuner:
             self.ubtuner = UBTuner(fn, key)
-        
+
         # Compile kernels in parallel by default for triton.runtime.JITFunction or UBTuner,
         # but not for others, e.g., LibEntry, since it's not compatible with AsyncCompileMode
         self.compile_parallel = (
@@ -407,20 +407,51 @@ class AutoTilingTuner(Autotuner):
         return expanded_configs
 
     def _expand_simd_multibuffer_configs(self, base_configs: List[Config]) -> List[Config]:
-        if self.user_specified_multibuffer is not None:
+        if (
+            self.user_specified_multibuffer is not None
+            or self.user_specified_num_stages is not None
+        ):
+            normalized_configs = []
+            for base_cfg in base_configs:
+                if self.user_specified_multibuffer is not None:
+                    base_cfg.kwargs["multibuffer"] = self.user_specified_multibuffer
+
+                if self.user_specified_num_stages is not None:
+                    base_cfg.num_stages = self.user_specified_num_stages
+                    # Keep compiler-visible multibuffer consistent when only num_stages is specified.
+                    if self.user_specified_multibuffer is None:
+                        base_cfg.kwargs["multibuffer"] = (
+                            self.user_specified_num_stages != 1
+                        )
+                else:
+                    base_cfg.num_stages = _multibuffer_to_num_stages(
+                        self.user_specified_multibuffer
+                    )
+
+                normalized_configs.append(base_cfg)
             if self.print_autotuning:
                 print(
                     "Triton autotuning: Skip SIMD multibuffer expansion because user "
-                    f"specified multibuffer={self.user_specified_multibuffer}"
+                    f"specified multibuffer={self.user_specified_multibuffer}, "
+                    f"num_stages={self.user_specified_num_stages}"
                 )
-            return base_configs
+            return normalized_configs
 
         opposite_default_multibuffer = not self.default_multibuffer
         simd_configs = []
         for base_cfg in base_configs:
+            base_multibuffer = base_cfg.kwargs.get(
+                "multibuffer", self.default_multibuffer
+            )
+            base_cfg.kwargs["multibuffer"] = base_multibuffer
+            base_cfg.num_stages = _multibuffer_to_num_stages(base_multibuffer)
             simd_configs.append(base_cfg)
-            new_cfg = copy.deepcopy(base_cfg)
+
+            new_cfg = _clone_config_with_kwargs(base_cfg, base_cfg.kwargs.copy())
             new_cfg.kwargs["multibuffer"] = opposite_default_multibuffer
+            new_cfg.num_stages = _multibuffer_to_num_stages(
+                opposite_default_multibuffer
+            )
             simd_configs.append(new_cfg)
 
         if self.print_autotuning:
@@ -1980,7 +2011,7 @@ class AutoTilingTuner(Autotuner):
                 f"one-shot rough benchmark failed, reason={type(exc).__name__}: {exc}"
             )
             return float("inf")
-    
+
     def _prune_by_time_limit(self, configs: List[Config], *args, **meta) -> List[Config]:
         time_limit = 200
 
@@ -2137,11 +2168,11 @@ class AutoTilingTuner(Autotuner):
         )
         self.nargs = None
         return ret
-    
+
     def _try_ubtuner(self, *args, config, excp, run_fns, **kwargs):
         if not (self.enable_ubtuner and "ub overflow" in str(excp).lower()):
             return
- 
+
         try:
             # Extract compile options from the current config and forward them
             # to ubtuner as the search starting point.

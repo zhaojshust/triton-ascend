@@ -30,17 +30,19 @@ The preceding environment variable configurations take effect only in the curren
 
 - Commercial edition
 
-| Triton-Ascend Version| CANN Commercial Version| CANN Release Date|
-|-------------------|----------------------|--------------------|
-| 3.2.0             | CANN 8.5.0           | 2026-01-16        |
-| 3.2.0rc4          | CANN 8.3.RC2<br>CANN 8.3.RC1         | 2025/11/20<br>2025/10/30         |
+| Triton-Ascend Version| CANN Commercial Version| CANN Release Date        |
+|-------------------|----------------------|--------------------------|
+| 3.2.1             | CANN 9.0.0             | 2026/04/30               |
+| 3.2.0             | CANN 8.5.0           | 2026/01/16               |
+| 3.2.0rc4          | CANN 8.3.RC2<br>CANN 8.3.RC1         | 2025/11/20<br>2025/10/30 |
 
 - Community edition
 
-| Triton-Ascend Version| CANN Community Version| CANN Release Date|
-|-------------------|----------------------|--------------------|
-| 3.2.0             | CANN 8.5.0           | 2026-01-16        |
-| 3.2.0rc4          | CANN 8.3.RC2<br>CANN 8.5.0.alpha001<br>CANN 8.3.RC1         | 2025/11/20<br>2025/11/12<br>2025/10/30         |
+| Triton-Ascend Version| CANN Community Version| CANN Release Date                      |
+|-------------------|----------------------|----------------------------------------|
+| 3.2.1             | CANN 9.0.0             | 2026/04/30                             |
+| 3.2.0             | CANN 8.5.0           | 2026/01/16                             |
+| 3.2.0rc4          | CANN 8.3.RC2<br>CANN 8.5.0.alpha001<br>CANN 8.3.RC1         | 2025/11/20<br>2025/11/12<br>2025/10/30 |
 
 ### Installing torch_npu
 
@@ -68,9 +70,12 @@ You can install the latest stable version of Triton-Ascend using pip.
 pip install triton-ascend
 ```
 
-- Note: Community Triton and Triton-Ascend cannot coexist. When you install other software that depends on Triton, community Triton will be automatically installed, which will overwrite the installed Triton-Ascend directory.
-
-In this case, you need to uninstall community Triton and Triton-Ascend first, and then install Triton-Ascend.
+- Note: for Triton-Ascend 3.2.0 and earlier versions：Triton-Ascend and Triton cannot coexist.You need to uninstall the community Triton first before installing Triton-Ascend.<br>
+For Triton-Ascend 3.2.1 and later versions.Triton-Ascend declares Triton as an installation dependency to mitigate the installation overwriting issue.When installing
+Triton-Ascend,the community Triton is installed first,and the Triton-Ascend overwrites the directory with the same name.
+This prevents the installation of triton from overwriting Triton-Ascend when other software packages that depend on Triton are installed.
+The reason why x86 and arm use different versions of the community Triton installation package is that the community provides the arm installation package only form version 3.2.1 onwards.
+Specifically,x86 depends on triton==3.2.0,and arm depends on triton==3.5.0.
 
 ```shell
 pip uninstall triton
@@ -256,10 +261,10 @@ git clone https://gitcode.com/Ascend/triton-ascend.git && cd triton-ascend
 
 We provide a Dockerfile to help you build a Docker environment image. During installation, the corresponding CANN Toolkit and Kernel packages will be automatically downloaded from the official CANN website. You need to specify the CANN-related parameters for your machine using `--build-arg`.
 
-| Parameter Name | Default Value | Available Options |
-|----------------|---------------|---------------------------------|
-| CHIP_TYPE      | A3            | A3, 910B |
-| CANN_VERSION   | 8.5.0 (Recommended) | 8.5.0, 8.3.RC1, 8.3.RC2, 8.2.RC1, 8.2.RC2 |
+| Parameter Name | Default Value       | Available Options                                |
+|----------------|---------------------|--------------------------------------------------|
+| CHIP_TYPE      | A3                  | A3, 910B                                         |
+| CANN_VERSION   | 9.0.0 (Recommended) | 9.0.0, 8.5.0, 8.3.RC1, 8.3.RC2, 8.2.RC1, 8.2.RC2 |
 
 You can check the NPU model on your system using the `npu-smi` command.
 
@@ -274,7 +279,7 @@ For the machines corresponding to different `CHIP_TYPE` options, refer to the ta
 git clone https://gitcode.com/Ascend/triton-ascend.git && cd triton-ascend
 docker build \
 --build-arg CHIP_TYPE=A3 \
---build-arg CANN_VERSION=8.5.0 \
+--build-arg CANN_VERSION=9.0.0 \
 -t triton-ascend-image:latest -f ./docker/Dockerfile .
 ```
 

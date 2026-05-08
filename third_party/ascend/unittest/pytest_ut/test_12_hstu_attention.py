@@ -569,8 +569,11 @@ def jagged_data_gen(batch_size, max_seq_len, num_heads, attention_dim, dataType)
     seq_lens = np.random.choice(seq_array, size=batch_size)
     if not np.isin(max_seq_len, seq_lens):
         seq_lens[np.random.randint(0, batch_size)] = max_seq_len
-    seq_offset = torch.concat((torch.zeros((1,), dtype=torch.int64),
-                               torch.cumsum(torch.from_numpy(seq_lens), axis=0))).to(torch.int64).numpy()
+    seq_lens_tensor = torch.from_numpy(seq_lens).to(dtype=torch.int64)
+    seq_offset = torch.concat((
+        torch.zeros((1,), dtype=torch.int64, device=seq_lens_tensor.device),
+        torch.cumsum(seq_lens_tensor, axis=0),
+    )).numpy()
     max_seq_len = np.max(seq_lens)
     total_seqs = np.sum(seq_lens)
     grad = torch.rand((int(total_seqs), num_heads, attention_dim), dtype=dataType)
@@ -678,7 +681,7 @@ def run_fwd_case(batch_size, max_seq_len, num_heads, attention_dim, data_type):
         loss = 1e-3
     elif data_type == torch.bfloat16:
         loss = 1e-2
-    torch.testing.assert_close(triton_output.cpu(), golden_output, atol=loss, rtol=loss)
+    torch.testing.assert_close(triton_output.cpu(), golden_output.cpu(), atol=loss, rtol=loss)
 
 
 def golden_bwd(grad, q, k, v, bias, mask, max_seq_len, seq_offset, enable_mask, silu_scale, enable_bias, data_type):

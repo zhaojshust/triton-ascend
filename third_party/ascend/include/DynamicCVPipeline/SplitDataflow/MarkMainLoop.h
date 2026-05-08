@@ -39,7 +39,7 @@ public:
   MarkMainLoopPass() = default;
 
   // Run the pass
-  void runOnOperation();
+  void runOnOperation() override;
 
 private:
 };

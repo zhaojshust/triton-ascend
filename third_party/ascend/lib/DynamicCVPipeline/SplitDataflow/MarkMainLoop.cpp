@@ -21,7 +21,9 @@
  */
 
 #include "ascend/include/DynamicCVPipeline/SplitDataflow/MarkMainLoop.h"
+#include "mlir/IR/Operation.h"
 #include "llvm/Support/Debug.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
 using namespace mlir;
 
@@ -36,6 +38,50 @@ void MarkMainLoopPass::runOnOperation()
 {
   LDBG("\n--- enter MarkMainLoopPass --->\n");
   ModuleOp module = getOperation();
+
+  int mainLoopIdCounter = 0;
+  SmallVector<scf::ForOp> mainLoops;
+
+  // Find all candidate main loops
+  module.walk([&](Operation* op) {
+    if (isa<hivm::FixpipeOp, hivm::CopyOp>(op)) {
+      if (auto forOp = op->getParentOfType<scf::ForOp>()) {
+        mainLoops.push_back(forOp);
+      }
+    }
+  });
+
+  for (scf::ForOp forOp : mainLoops) {
+    if (!forOp->hasAttr("ssbuffer.main_loop")) {
+      // Add attribute with integer value (current counter ID)
+      forOp->setAttr("ssbuffer.main_loop",
+                     Builder(module.getContext()).getI32IntegerAttr(mainLoopIdCounter));
+      mainLoopIdCounter++;
+    }
+  }
+
+  // Remove main_loop attribute from outer loops if nested loops both have it
+  // Keep only the innermost main_loop
+  SmallVector<scf::ForOp> allMainLoops;
+  module.walk([&](scf::ForOp forOp) {
+    if (forOp->hasAttr("ssbuffer.main_loop")) {
+      allMainLoops.push_back(forOp);
+    }
+  });
+
+  for (scf::ForOp forOp : allMainLoops) {
+    // Check if there's any nested for loop with main_loop attribute
+    bool hasNestedMainLoop = false;
+    forOp.walk([&](scf::ForOp nestedForOp) {
+      if (nestedForOp != forOp && nestedForOp->hasAttr("ssbuffer.main_loop")) {
+        hasNestedMainLoop = true;
+      }
+    });
+    // Remove attribute from outer loop if inner loop also has it
+    if (hasNestedMainLoop) {
+      forOp->removeAttr("ssbuffer.main_loop");
+    }
+  }
 
   LDBG("--- exit MarkMainLoopPass --->\n");
 }

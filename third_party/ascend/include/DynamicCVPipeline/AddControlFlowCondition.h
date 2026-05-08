@@ -23,19 +23,27 @@
 #ifndef TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_ADD_CONTROLFLOW_CONDITION_PASS_H
 #define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_ADD_CONTROLFLOW_CONDITION_PASS_H
 
+#include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Linalg/TransformOps/DialectExtension.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
 namespace mlir {
 namespace triton {
-// The information that controlFlow sub-passes need to share
+// The information that controlFlow sub-passes need to share.
 struct ControlFlowConditionInfo {
-    DenseMap<Value, SmallVector<Value> > crossCoreDependentMap;
-    DenseMap<scf::ForOp, DenseMap<Value, SmallVector<Value> > > intraCoreDependentMap;
+    llvm::DenseMap<scf::ForOp, SmallVector<int> > blockCounters;
+    llvm::DenseMap<scf::ForOp, int> blockCounterNums;
+    llvm::DenseMap<scf::ForOp, SmallVector<int> > innerDepConds;
+
+    llvm::DenseMap<Value, SmallVector<Value> > crossCoreDependentMap;
+    llvm::DenseMap<scf::ForOp, llvm::DenseMap<Value, SmallVector<Value> > > intraCoreDependentMap;
+
+    // The counter parameter used by IfOp.
+    llvm::DenseMap<scf::IfOp, Value> cntArgs;
 };
 
 class AddControlFlowConditionPass : public PassWrapper<AddControlFlowConditionPass, OperationPass<ModuleOp> > {
@@ -46,7 +54,6 @@ public:
 };
 
 std::unique_ptr<OperationPass<ModuleOp> > createAddControlFlowConditionPass();
-
 } // namespace triton
 } // namespace mlir
 

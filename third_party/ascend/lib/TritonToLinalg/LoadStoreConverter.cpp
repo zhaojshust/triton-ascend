@@ -345,25 +345,6 @@ LoadConverter::matchAndRewrite(triton::LoadOp op, OpAdaptor adaptor,
   auto boundaryCheck = op.getBoundaryCheck();
   if (!boundaryCheck.empty()) {
     auto makeTensorPtrOp = op.getPtr().getDefiningOp<triton::MakeTensorPtrOp>();
-    if (makeTensorPtrOp && makeTensorPtrOp->hasAttr("original_order")) {
-      /*
-       if make_tensor_ptr has an 'original_order', which means it has been permuted, then 'boundary_check' should follow:
-       new_boundarycheck[i] = ((rank-1)-pos) * [original_order[pos] == boundaryCheck[i]], to keep the boundary_check axis correct;
-       e.g. original_order = (0, 1) boundary_check = (1,) -> new_boundaryCheck[0] = 2-1-1 = 0 
-            because original_order[1]==boundary_check[0]==1
-      */
-      auto permutedOrderReversed = llvm::cast<DenseI32ArrayAttr>(makeTensorPtrOp->getAttr("original_order")).asArrayRef();
-      SmallVector<int32_t> new_boundarycheck(boundaryCheck.begin(), boundaryCheck.end());
-      int sz = permutedOrderReversed.size() - 1;
-      for(auto &b: new_boundarycheck) {
-        int i = 0;
-        for(;i <= sz; i++)
-          if(permutedOrderReversed[i] == b) {break;}
-        b = sz - i;
-      }
-      boundaryCheck = new_boundarycheck;
-    }
-
     auto boundarySizes = mlir::ConverterUtils::getBoundarySizes(
         boundaryCheck, /*remapped*/ ptr, loc, rewriter);
     // handle the padding
@@ -1065,25 +1046,6 @@ StoreConverter::matchAndRewrite(triton::StoreOp op, OpAdaptor adaptor,
   auto boundaryCheck = op.getBoundaryCheck();
   if (!boundaryCheck.empty()) {
     auto makeTensorPtrOp = op.getPtr().getDefiningOp<triton::MakeTensorPtrOp>();
-    if (makeTensorPtrOp && makeTensorPtrOp->hasAttr("original_order")) {
-      /*
-      if make_tensor_ptr has an 'original_order', which means it has been permuted, then 'boundary_check' should follow:
-      new_boundarycheck[i] = ((rank-1)-pos) * [original_order[pos] == boundaryCheck[i]], to keep the boundary_check axis correct;
-      e.g. original_order = (0, 1) boundary_check = (1,) -> new_boundaryCheck[0] = 2-1-1 = 0 
-            because original_order[1]==boundary_check[0]==1
-      */
-      auto permutedOrderReversed = llvm::cast<DenseI32ArrayAttr>(makeTensorPtrOp->getAttr("original_order")).asArrayRef();
-      SmallVector<int32_t> new_boundarycheck(boundaryCheck.begin(), boundaryCheck.end());
-      int sz = permutedOrderReversed.size() - 1;
-      for(auto &b: new_boundarycheck) {
-        int i = 0;
-        for(;i <= sz; i++)
-          if(permutedOrderReversed[i] == b) {break;}
-        b = sz - i;
-      }
-      boundaryCheck = new_boundarycheck;
-    }
-
     auto boundarySizes = mlir::ConverterUtils::getBoundarySizes(
         boundaryCheck, /*remapped*/ ptr, loc, rewriter);
     SmallVector<OpFoldResult> srcOffsets;

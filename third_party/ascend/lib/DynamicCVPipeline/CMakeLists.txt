@@ -4,7 +4,9 @@ file(GLOB PLAN_COMPUTE_BLOCK_PASS_SRC
 file(GLOB COMMON_SRC
   "Common/*.cpp"
 )
-
+file(GLOB SPLIT_DATAFLOW_SRC_FILES CONFIGURE_DEPENDS
+    "SplitDataflow/*.cpp"
+)
 file(GLOB SEPARATE_MEMORY_FROM_COMPUTE_SRC_FILES CONFIGURE_DEPENDS
   "SeparateMemoryFromCompute/*.cpp"
 )
@@ -23,6 +25,7 @@ add_triton_library(DynamicCVPipeline
   AllocMultiCache.cpp
   AddControlFlowCondition.cpp
   ${PLAN_COMPUTE_BLOCK_SRC_FILES}
+	${SPLIT_DATAFLOW_SRC_FILES}
   ${SEPARATE_MEMORY_FROM_COMPUTE_SRC_FILES}
   ${ADD_CONTROLFLOW_CONDITION_SRC_FILES}
 

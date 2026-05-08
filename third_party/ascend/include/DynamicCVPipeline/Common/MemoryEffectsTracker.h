@@ -29,10 +29,8 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 namespace mlir {
-namespace triton {
-
+namespace CVPipeline {
 constexpr int INIT_SIZE = 4;
-
 class MemoryDependenceGraph {
 public:
     MemoryDependenceGraph(Operation *root, AliasAnalysis &aa);
@@ -92,7 +90,7 @@ private:
     DenseMap<Value, MemSlot *> valueToSlot;
 };
 
-} // namespace triton
+} // namespace CVPipeline
 } // namespace mlir
 
 #endif // TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_MEMORY_EFFECTS_TRACKER_H

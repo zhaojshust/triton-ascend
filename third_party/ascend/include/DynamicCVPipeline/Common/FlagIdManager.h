@@ -20,11 +20,11 @@
  * THE SOFTWARE.
  */
 
-#ifndef TRITON_ADAPTER_FLAG_ID_MANAGER_H
-#define TRITON_ADAPTER_FLAG_ID_MANAGER_H
+#ifndef TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
+#define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
 
-#include <optional>
 #include "mlir/IR/BuiltinOps.h"
+#include <optional>
 
 namespace mlir {
 namespace triton {
@@ -64,4 +64,4 @@ private:
 } // namespace triton
 } // namespace mlir
 
-#endif // TRITON_ADAPTER_FLAG_ID_MANAGER_H
+#endif // TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H

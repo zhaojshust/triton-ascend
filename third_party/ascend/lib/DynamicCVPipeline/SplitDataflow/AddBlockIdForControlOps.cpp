@@ -38,6 +38,35 @@ void AddBlockIdForControlOpsPass::runOnOperation()
   LDBG("\n--- enter AddBlockIdForControlOpsPass --->\n");
   ModuleOp module = getOperation();
 
+  // Step 1: find the max block_id
+  int maxBlockId = -1;
+  module.walk([&](Operation *op) {
+    if (auto attr = op->getAttrOfType<IntegerAttr>("ssbuffer.block_id")) {
+      int currentId = attr.getInt();
+      if (currentId > maxBlockId) {
+        maxBlockId = currentId;
+      }
+    }
+  });
+
+  LDBG("[InterCoreTransferAndSyncPass] maxBlockId: " << maxBlockId << "\n");
+
+  // Step 2: add block_id for control flow ops
+  module.walk([&](Operation *op) {
+
+    // skip op with block_id
+    if (op->getAttrOfType<IntegerAttr>("ssbuffer.block_id")) {
+      return;
+    }
+
+    if (isa<scf::ForOp, scf::IfOp, scf::WhileOp>(op)) {
+      maxBlockId++;
+      op->setAttr("ssbuffer.block_id",
+                  IntegerAttr::get(IntegerType::get(module.getContext(), 32), maxBlockId));
+      LDBG("Added block_id " << maxBlockId << " to " << *op << "\n");
+    }
+  });
+
   LDBG("\n--- exit AddBlockIdForControlOpsPass --->\n");
 }
 

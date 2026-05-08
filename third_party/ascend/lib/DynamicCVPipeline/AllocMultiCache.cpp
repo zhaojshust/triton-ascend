@@ -44,7 +44,7 @@ void AllocMultiCachePass::runOnOperation()
     ModuleOp module = getOperation();
     OpPassManager pm(module.getOperationName());
     LDBG("Enter pass.");
-    LDBG(llvm::StringRef("before innerscope:\n") << module << "\n");
+    LDBG("before innerscope:\n" << module << "\n");
     // Step 1:Inner multibuffer
     pm.addPass(createAddMultiBufferInnerScopePass());
 

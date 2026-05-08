@@ -71,10 +71,21 @@ private:
       DependencyInfo& dep,
       llvm::DenseMap<mlir::Value, mlir::Value> cubeValueMapping,
       FlagIdManager& flagManager);
+  mlir::LogicalResult handleMemoryDependency(
+      mlir::OpBuilder &builder,
+      DependencyInfo& dep,
+      size_t depIndex,
+      llvm::SmallVector<DependencyInfo> memDependencies,
+      FlagIdManager& flagManager);
 
   std::pair<mlir::Operation*, mlir::Operation*> getBlockStartEnd(
       int blockId,
       mlir::ModuleOp module);
+  bool isOuterLayerDependency(
+      size_t depIndex,
+      mlir::Operation* currProdEnd,
+      mlir::Operation* currConsStart,
+      llvm::SmallVector<DependencyInfo>& memDependencies);
 
   llvm::SmallVector<int64_t, 2> computeExpectedShape(mlir::Value value);
   bool isShapeExpected(mlir::Value value, llvm::SmallVector<int64_t, 2>& expectedShape);
@@ -106,6 +117,12 @@ private:
   void insertInterCoreSync(mlir::OpBuilder &builder, mlir::Operation* transferOp,
                           mlir::Operation* consumerStartOp, mlir::Operation* consumerEndOp,
                           int flag, mlir::Location loc, int transferIndex);
+  void insertPipeSSync(mlir::OpBuilder &builder,
+                       mlir::Operation* producerOp,
+                       mlir::Operation* consumerOp,
+                       int flag,
+                       mlir::Location loc,
+                       bool isCubeToVector);
 };
 
 std::unique_ptr<OperationPass<ModuleOp>> createInterCoreTransferAndSyncPass();

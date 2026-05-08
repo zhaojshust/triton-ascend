@@ -146,6 +146,55 @@ InterCoreTransferAndSyncPass::getBlockStartEnd(int targetId, mlir::ModuleOp modu
   return {start, end};
 }
 
+bool InterCoreTransferAndSyncPass::isOuterLayerDependency(
+    size_t depIndex,
+    mlir::Operation* currProdEnd,
+    mlir::Operation* currConsStart,
+    llvm::SmallVector<DependencyInfo>& memDependencies) {
+  if (!currProdEnd || !currConsStart) {
+    return false;
+  }
+  mlir::Block* currBlock = currProdEnd->getBlock();
+  if (currBlock != currConsStart->getBlock()) {
+    return false;
+  }
+  for (size_t i = 0; i < memDependencies.size(); ++i) {
+    if (i == depIndex) {
+      continue;
+    }
+    auto& otherDep = memDependencies[i];
+
+    auto [otherProdStart, otherProdEnd] = getBlockStartEnd(otherDep.producerBlockId, module);
+    auto [otherConsStart, otherConsEnd] = getBlockStartEnd(otherDep.consumerBlockId, module);
+
+    if (!otherProdEnd || !otherConsStart) {
+      continue;
+    }
+
+    if (otherProdEnd->getBlock() != currBlock || otherConsStart->getBlock() != currBlock) {
+      continue;
+    }
+
+    // otherProdEnd is before currProdEnd
+    // AND currConsStart is before otherConsStart
+    bool isOtherInsideCurrent =
+        !otherProdEnd->isBeforeInBlock(currProdEnd) &&
+        !currConsStart->isBeforeInBlock(otherConsStart);
+
+    if (otherProdEnd == currProdEnd && otherConsStart == currConsStart) {
+      if (i < depIndex) {
+        // if otherDep has smaller index, current dep is outer layer and can be skipped
+        return true;
+      }
+    } else if (isOtherInsideCurrent) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
 // Nd2NzNormalizer
 SmallVector<int64_t, 2>
 InterCoreTransferAndSyncPass::computeExpectedShape(Value value) {
@@ -685,6 +734,54 @@ void InterCoreTransferAndSyncPass::insertInterCoreSync(OpBuilder &builder, Opera
   }
 }
 
+void InterCoreTransferAndSyncPass::insertPipeSSync(OpBuilder &builder,
+                                        Operation* producerOp,
+                                        Operation* consumerOp,
+                                        int flag,
+                                        Location loc,
+                                        bool isCubeToVector) {
+  LDBG("Inserting PIPE_S sync: "
+               << (isCubeToVector ? "CUBE->VECTOR" : "VECTOR->CUBE")
+               << ", flag = " << flag << "\n");
+
+  // CUBE -> VECTOR: srcPipe = PIPE_FIX, srcCoreType = CUBE, dstCoreType = VECTOR
+  // VECTOR -> CUBE: srcPipe = PIPE_MTE2, srcCoreType = VECTOR, dstCoreType = CUBE
+  hivm::PIPE srcPipe = isCubeToVector ? hivm::PIPE::PIPE_FIX : hivm::PIPE::PIPE_MTE2;
+  hivm::TCoreType srcCoreType = isCubeToVector ? hivm::TCoreType::CUBE : hivm::TCoreType::VECTOR;
+  hivm::TCoreType dstCoreType = isCubeToVector ? hivm::TCoreType::VECTOR : hivm::TCoreType::CUBE;
+  hivm::PIPE dstPipe = hivm::PIPE::PIPE_S;
+
+  auto srcCoreAttr = hivm::TCoreTypeAttr::get(builder.getContext(), srcCoreType);
+  auto dstCoreAttr = hivm::TCoreTypeAttr::get(builder.getContext(), dstCoreType);
+  auto srcPipeAttr = PipeAttr::get(builder.getContext(), srcPipe);
+  auto dstPipeAttr = PipeAttr::get(builder.getContext(), dstPipe);
+  auto flagId = builder.getIntegerAttr(builder.getI64Type(), flag);
+
+  builder.setInsertionPointAfter(producerOp);
+  auto setOp = builder.create<SyncBlockSetOp>(loc, srcCoreAttr, srcPipeAttr, dstPipeAttr, flagId);
+
+  builder.setInsertionPoint(consumerOp);
+  auto waitOp = builder.create<SyncBlockWaitOp>(loc, dstCoreAttr, srcPipeAttr, dstPipeAttr, flagId);
+
+  auto prodIdAttr = producerOp->getAttrOfType<IntegerAttr>("ssbuffer.block_id");
+  auto consIdAttr = consumerOp->getAttrOfType<IntegerAttr>("ssbuffer.block_id");
+
+  if (prodIdAttr) {
+    int prodBlockId = prodIdAttr.getInt();
+    StringRef prodCoreType = isCubeToVector ? "CUBE" : "VECTOR";
+    attachCommonTags(setOp, prodBlockId, prodCoreType);
+  }
+
+  if (consIdAttr) {
+    int consBlockId = consIdAttr.getInt();
+    StringRef consCoreType = isCubeToVector ? "VECTOR" : "CUBE";
+    attachCommonTags(waitOp, consBlockId, consCoreType);
+  }
+
+  LDBG("[PIPE_S setOp]: " << *setOp << "\n");
+  LDBG("[PIPE_S waitOp]: " << *waitOp << "\n");
+}
+
 // V->C Transfer Logic
 LogicalResult InterCoreTransferAndSyncPass::handleVectorToCube(
     OpBuilder &builder,
@@ -750,6 +847,51 @@ LogicalResult InterCoreTransferAndSyncPass::handleCubeToVector(
   return success();
 }
 
+// PIPE_S Memory Dependency
+LogicalResult InterCoreTransferAndSyncPass::handleMemoryDependency(
+    OpBuilder &builder,
+    DependencyInfo& dep,
+    size_t depIndex,
+    llvm::SmallVector<DependencyInfo> memDependencies,
+    FlagIdManager& flagManager) {
+  LDBG("Handling PIPE_S memory dependency...\n");
+
+  // Get producer and consumer block start/end operations
+  auto [prodStart, prodEnd] = getBlockStartEnd(dep.producerBlockId, module);
+  auto [consStart, consEnd] = getBlockStartEnd(dep.consumerBlockId, module);
+
+  if (!prodStart || !prodEnd || !consStart || !consEnd) {
+    LDBG("[ERROR] Failed to get block start/end operations.\n");
+    return failure();
+  }
+
+  if (isOuterLayerDependency(depIndex, prodEnd, consStart, memDependencies)) {
+    LDBG("[PIPE_S] Skipping outer layer dependency: block " << dep.producerBlockId
+             << " -> block " << dep.consumerBlockId << "\n");
+    return success();
+  }
+
+  // Get flag ID
+  int flagId = flagManager.acquireId(prodStart);
+
+  // Determine sync direction: CUBE->VECTOR or VECTOR->CUBE
+  bool isCubeToVector = (dep.type == DependencyType::CubeToVector);
+
+  // Get location info
+  Location loc = prodEnd->getLoc();
+
+  // Insert PIPE_S sync
+  insertPipeSSync(builder, prodEnd, consStart, flagId, loc, isCubeToVector);
+
+  transferIndex++;
+
+  LDBG("Inserted PIPE_S sync: block " << dep.producerBlockId
+               << " -> block " << dep.consumerBlockId
+               << ", flagId = " << flagId << "\n");
+
+  return success();
+}
+
 // Main Processing
 LogicalResult InterCoreTransferAndSyncPass::processDependencies(FlagIdManager& flagManager) {
   LDBG("Starting InterCoreTransferAndSyncPass processDependencies...\n");
@@ -795,6 +937,21 @@ LogicalResult InterCoreTransferAndSyncPass::processDependencies(FlagIdManager& f
   }
   LDBG("Completed C->V transfers and syncs.\n");
 
+  llvm::SmallVector<DependencyInfo>& memDependencies = info.getMemoryDependencies();
+  LDBG("[DEBUG] MemoryDependencies size: " << memDependencies.size() << "\n");
+
+  for (size_t i = 0; i < memDependencies.size(); ++i) {
+    auto& dep = memDependencies[i];
+    LDBG("[PIPE_S] value = " << dep.value
+                 << " producerBlockId = " << dep.producerBlockId
+                 << ", consumerBlockId = " << dep.consumerBlockId << "\n");
+    if (failed(handleMemoryDependency(builder, dep, i, memDependencies, flagManager))) {
+      LDBG("[ERROR] PIPE_S failed! producerBlockId = " << dep.producerBlockId
+                   << ", consumerBlockId = " << dep.consumerBlockId << "\n");
+      return failure();
+    }
+  }
+  LDBG("Completed PIPE_S memory syncs.\n");
   LDBG("=====================================================\n");
   LDBG("InterCoreTransferAndSyncPass success!\n");
 

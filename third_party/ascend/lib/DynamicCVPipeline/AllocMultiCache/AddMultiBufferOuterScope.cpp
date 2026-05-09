@@ -1,4 +1,3 @@
-#include "mlir/Pass/PassManager.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallSet.h"
@@ -440,6 +439,158 @@ static int collectTransferGroupData(
 }
 
 // ============================================================================
+// Step 2: 创建 output buffers
+// ============================================================================
+
+static int allocateNewTcbId(int startFrom, std::set<int> &usedTcbIds) {
+    for (int id = startFrom; id < 100; ++id) {
+        if (!usedTcbIds.count(id)) {
+            usedTcbIds.insert(id);
+            return id;
+        }
+    }
+    return -1;
+}
+
+/// 为一对 input/output buffer 创建 output buffer（在 input alloc 之后创建 output alloc + mark）
+static int createOutputBufferPair(Operation *inputAllocOp, int tid, int tcbId,
+                                 Value &inputBuffer, Value &outputBuffer,
+                                 OpBuilder &builder, bool isSender) {
+    if (!inputAllocOp) return -1;
+
+    Location loc = builder.getUnknownLoc();
+
+    inputBuffer = inputAllocOp->getResult(0);
+    auto memRefType = dyn_cast<MemRefType>(inputBuffer.getType());
+    if (!memRefType) return -1;
+
+    int origBlockId = getBlockId(inputAllocOp);
+    int outputBlockId = origBlockId;
+
+    builder.setInsertionPointAfter(inputAllocOp);
+    auto outputAlloc = builder.create<memref::AllocOp>(loc, memRefType);
+    outputAlloc->setAttr("ssbuffer.block_id", builder.getI32IntegerAttr(outputBlockId));
+    outputAlloc->setAttr("ssbuffer.transfer_id", builder.getI32IntegerAttr(tid));
+    outputBuffer = outputAlloc.getResult();
+
+    if (!isSender) {
+        outputAlloc->setAttr("ssbuffer.crossDeps", builder.getArrayAttr({
+            builder.getI32IntegerAttr(tid),
+            builder.getI32IntegerAttr(1)
+        }));
+    }
+
+    auto outputMark = builder.create<annotation::MarkOp>(loc, outputBuffer);
+    outputMark->setAttr("effects", builder.getStrArrayAttr({"write", "read"}));
+    outputMark->setAttr("ssbuffer.block_id", builder.getI32IntegerAttr(outputBlockId));
+    outputMark->setAttr("ssbuffer.transfer_id", builder.getI32IntegerAttr(tid));
+    outputMark->setAttr("hivm.tightly_coupled_buffer",
+                      hivm::HIVMTightlyCoupledBufferAttr::get(builder.getContext(), tcbId));
+
+    LDBG("Created " << (isSender ? "sender" : "receiver")
+                 << " output buffer: block_id=" << outputBlockId << ", tcb_id=" << tcbId);
+    return 0;
+}
+
+static int attachSsbufferTags(Operation *op, int blockId, int transferId) {
+    MLIRContext* ctx = op->getContext();
+    op->setAttr("ssbuffer.block_id", IntegerAttr::get(IntegerType::get(ctx, 32), blockId));
+    op->setAttr("ssbuffer.transfer_id", IntegerAttr::get(IntegerType::get(ctx, 32), transferId));
+    return 0;
+}
+
+static hivm::SyncBlockSetOp createOutputSyncSetOp(Operation *origSetOp, int outputFlag, int tid, OpBuilder &builder) {
+    auto setOp = cast<hivm::SyncBlockSetOp>(origSetOp);
+    builder.setInsertionPointAfter(origSetOp);
+    auto newSetOp = builder.create<hivm::SyncBlockSetOp>(
+        setOp.getLoc(), setOp.getTcoreType(), setOp.getTpipe(), setOp.getPipe(),
+        builder.getI64IntegerAttr(outputFlag));
+    attachSsbufferTags(newSetOp.getOperation(), getBlockId(setOp), tid);
+    return newSetOp;
+}
+
+static hivm::SyncBlockWaitOp createOutputSyncWaitOp(Operation *origWaitOp, int outputFlag, int tid, OpBuilder &builder) {
+    auto waitOp = cast<hivm::SyncBlockWaitOp>(origWaitOp);
+    builder.setInsertionPointAfter(origWaitOp);
+    auto newWaitOp = builder.create<hivm::SyncBlockWaitOp>(
+        waitOp.getLoc(), waitOp.getTcoreType(), waitOp.getTpipe(), waitOp.getPipe(),
+        builder.getI64IntegerAttr(outputFlag));
+    attachSsbufferTags(newWaitOp.getOperation(), getBlockId(waitOp), tid);
+    return newWaitOp;
+}
+
+/// 为单个传输组创建 output buffer，并在 extra_sync 位置插入 output flag 同步操作
+static int createOutputBufferForGroup(TransferGroupInfo &g, OpBuilder &builder) {
+    // 创建 sender/receiver 的 output buffer
+    if (createOutputBufferPair(g.senderBuf.allocOp, g.tid, g.tcbId,
+                         g.senderInputBuffer, g.senderOutputBuffer, builder, true)) return -1;
+    if (createOutputBufferPair(g.receiverBuf.allocOp, g.tid, g.tcbId,
+                         g.receiverInputBuffer, g.receiverOutputBuffer, builder, false)) return -1;
+
+    // 在 extra_sync 位置插入 output sync set
+    if (g.extraSyncSetOp) {
+        createOutputSyncSetOp(g.extraSyncSetOp, g.outputFlag, g.tid, builder);
+        LDBG("Created output sync set with flag=" << g.outputFlag
+                     << " at block_id=" << getBlockId(g.extraSyncSetOp) << " (sender scope)");
+    }
+
+    // 在 extra_sync 位置插入 output sync wait
+    Operation *outputWaitInsertOp = g.extraSyncWaitOp ? g.extraSyncWaitOp : g.receiverChain.waitOp;
+    if (outputWaitInsertOp) {
+        createOutputSyncWaitOp(outputWaitInsertOp, g.outputFlag, g.tid, builder);
+        LDBG("Created output sync wait with flag=" << g.outputFlag
+                     << " at block_id=" << getBlockId(outputWaitInsertOp) << " (receiver scope)");
+    }
+    return 0;
+}
+
+/// Step 2: 为所有传输组创建 output buffers
+static int createOutputBuffers(DenseMap<int, TransferGroupInfo> &groups, ModuleOp module) {
+    OpBuilder builder(module.getContext());
+    std::set<int> usedTcbIds;
+
+    // 收集已有的 tcb ids
+    module.walk([&](Operation *op) {
+        if (auto tcbAttr = op->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>("hivm.tightly_coupled_buffer")) {
+            auto id = tcbAttr.getId();
+            if (id.has_value()) {
+                LDBG("Found mark op with tcb_id=" << id.value());
+                usedTcbIds.insert(id.value());
+            }
+        }
+    });
+
+    LDBG("=== Step 2: Creating output buffers ===");
+    {
+        std::string ids;
+        llvm::raw_string_ostream os(ids);
+        for (int id : usedTcbIds) os << id << " ";
+        LDBG("Collected existing tcb_ids: " << ids);
+    }
+
+    int maxExistingTcbId = usedTcbIds.empty() ? 0 : *usedTcbIds.rbegin();
+    LDBG("Max existing tcb_id: " << maxExistingTcbId);
+
+    int nextTcbId = maxExistingTcbId + 1;
+
+    for (auto &p : groups) {
+        TransferGroupInfo &g = p.second;
+        LDBG("Group tid=" << g.tid << " (" << (g.isCtoV ? "C→V" : "V→C") << ")");
+
+        g.tcbId = allocateNewTcbId(nextTcbId, usedTcbIds);
+        LDBG("Allocated tcb_id=" << g.tcbId);
+
+        nextTcbId = g.tcbId + 1;
+
+        createOutputBufferForGroup(g, builder);
+    }
+    return 0;
+}
+
+// ============================================================================
+// Step 2 Entry
+// ============================================================================
+
 void AddMultiBufferOuterScopePass::runOnOperation()
 {
     ModuleOp module = getOperation();
@@ -457,7 +608,13 @@ void AddMultiBufferOuterScopePass::runOnOperation()
     }
     LDBG("Collected " << groups.size() << " transfer groups");
 
-    // Step 2: Create output buffers (TODO)
+    // Step 2: Create output buffers
+    if (createOutputBuffers(groups, module)) {
+        LDBG("[Step 2] FAILED: output buffer creation failed");
+        signalPassFailure();
+        return;
+    }
+    LDBG("Output buffers created");
 
     // Step 3: Add multi-buffer control flow (TODO)
 

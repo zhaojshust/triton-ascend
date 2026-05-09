@@ -20,47 +20,34 @@
  * THE SOFTWARE.
  */
 
-#ifndef TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_ADD_CONTROLFLOW_CONDITION_PASS_H
-#define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_ADD_CONTROLFLOW_CONDITION_PASS_H
-
-#include "llvm/ADT/SmallVector.h"
-#include "mlir/Dialect/Linalg/TransformOps/DialectExtension.h"
+#ifndef TRITON_ASCEND_SSBUF_CLONE_OPS_FOR_CONTROL_FLOW_H
+#define TRITON_ASCEND_SSBUF_CLONE_OPS_FOR_CONTROL_FLOW_H
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/DialectRegistry.h"
 #include "mlir/Pass/Pass.h"
-#include "llvm/ADT/SmallPtrSet.h"
 
 namespace mlir {
 namespace triton {
 
-struct ControlFlowConditionInfo {
-  llvm::DenseMap<scf::ForOp, SmallVector<int>> blockCounters;
-  llvm::DenseMap<scf::ForOp, int> blockCounterNums;
-  llvm::DenseMap<scf::ForOp, SmallVector<int>> innerDepConds;
-
-  llvm::DenseMap<Value, SmallVector<Value>> crossCoreDependentMap;
-  llvm::DenseMap<scf::ForOp, llvm::DenseMap<Value, SmallVector<Value>>> intraCoreDependentMap;
-
-  llvm::DenseMap<scf::IfOp, Value> cntArgs;
-};
-
-class AddControlFlowConditionPass
-    : public PassWrapper<AddControlFlowConditionPass, OperationPass<ModuleOp>> {
+class CloneOpsPass : public PassWrapper<CloneOpsPass, OperationPass<ModuleOp>> {
 public:
-  AddControlFlowConditionPass() = default;
+  CloneOpsPass() = default;
 
   void runOnOperation() override;
 
-  void getDependentDialects(DialectRegistry &registry) const override
-  {
-    registry.insert<LLVM::LLVMDialect>();
-  }
+  LogicalResult validateBlockIdsConsecutive(ModuleOp module);
+  LogicalResult cloneOpsInMainLoop(scf::ForOp forOp);
+  LogicalResult cleanupClonedOpsInMainLoop(scf::ForOp forOp);
 
-  llvm::StringRef getArgument() const override { return "add-control-flow-condition"; }
+  llvm::StringRef getArgument() const override
+  {
+    return "clone-ops";
+  }
 };
 
-std::unique_ptr<OperationPass<ModuleOp>> createAddControlFlowConditionPass();
+std::unique_ptr<OperationPass<ModuleOp>> createCloneOpsPass();
+
 } // namespace triton
 } // namespace mlir
-#endif // TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_ADD_CONTROLFLOW_CONDITION_PASS_H
+#endif // TRITON_ASCEND_SSBUF_CLONE_OPS_FOR_CONTROL_FLOW_H

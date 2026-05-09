@@ -32,49 +32,65 @@
 namespace mlir {
 namespace triton {
 
-// ============================================================================
-// 数据结构
-// ============================================================================
+// Data structures
 
-/// 传输操作链（用于发端或收端）
-struct TransferOpChain {
-    Operation *waitOp = nullptr;           // sync_block_wait
-    Operation *transferOp = nullptr;        // fixpipe / hir.copy / memory_space_cast / convert_layout
-    Operation *toTensorOp = nullptr;       // bufferization.to_tensor (仅 memspacecast 场景有)
-    Operation *setOp = nullptr;             // sync_block_set
-};
-
-/// Buffer alloc 对
+/// Buffer alloc pair: {allocOp, markOp}
 struct BufferAllocPair {
     Operation *allocOp = nullptr;
     Operation *markOp = nullptr;
 };
 
-/// 传输组完整信息
+/// Transfer operation chain for sender or receiver side
+struct TransferOpChain {
+    Operation *waitOp = nullptr;
+    Operation *transferOp = nullptr;  // fixpipe / hir.copy / memory_space_cast / convert_layout
+    Operation *toTensorOp = nullptr;  // bufferization.to_tensor (memory_space_cast scenario only)
+    Operation *setOp = nullptr;
+};
+
+/// Buffer alloc info: {sender, receiver}
+struct BufferAllocInfo {
+    BufferAllocPair sender;
+    BufferAllocPair receiver;
+};
+
+/// Extra sync info for sync ops whose parent does NOT have main_loop attribute
+struct ExtraSyncInfo {
+    Operation *setOp = nullptr;
+    Operation *waitOp = nullptr;
+};
+
+/// Transfer chain info: {senderChain, receiverChain}
+struct TransferChainInfo {
+    TransferOpChain sender;
+    TransferOpChain receiver;
+};
+
+/// Complete transfer group information
 struct TransferGroupInfo {
     int tid = -1;
-    int originalFlag = -1;      // 原始 flag
-    int outputFlag = -1;          // 新分配的 output flag
-    bool isCtoV = false;        // true=C→V, false=V→C
+    int originalFlag = -1;
+    int outputFlag = -1;
+    bool isCtoV = false;  // true=C→V, false=V→C
 
-    BufferAllocPair senderBuf;   // 发送端 buffer (producer)
-    BufferAllocPair receiverBuf; // 接收端 buffer (consumer)
+    BufferAllocPair senderBuf;
+    BufferAllocPair receiverBuf;
 
-    TransferOpChain senderChain;   // 发送端操作链
-    TransferOpChain receiverChain; // 接收端操作链
+    TransferOpChain senderChain;
+    TransferOpChain receiverChain;
 
-    // Input/output buffer values (for later steps)
-    Value senderInputBuffer;      // sender input buffer (original)
-    Value senderOutputBuffer;      // sender output buffer (newly created)
-    Value receiverInputBuffer;    // receiver input buffer (original)
-    Value receiverOutputBuffer;    // receiver output buffer (newly created)
+    // Input/output buffer values
+    Value senderInputBuffer;
+    Value senderOutputBuffer;
+    Value receiverInputBuffer;
+    Value receiverOutputBuffer;
 
-    // TCB ID: 同一 tid 组的所有 buffer（共 4 个：sender input/output + receiver input/output）共用一个 tcb_id
+    // TCB ID shared across all 4 buffers in the same transfer group
     int tcbId = -1;
 
-    // Extra sync 位置（用于 output flag 同步）
-    Operation *extraSyncSetOp = nullptr;  // extra set op 的位置（插入点）
-    Operation *extraSyncWaitOp = nullptr;  // extra wait op 的位置（插入点）
+    // Extra sync positions for output flag synchronization
+    Operation *extraSyncSetOp = nullptr;
+    Operation *extraSyncWaitOp = nullptr;
 };
 
 /// AddMultiBufferOuterScopePass for adding outer (CV inter-core) multi-buffer optimization

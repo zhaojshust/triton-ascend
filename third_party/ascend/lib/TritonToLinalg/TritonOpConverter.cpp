@@ -1878,7 +1878,7 @@ LogicalResult TritonMulhiuiConverter::matchAndRewrite(
   Value opl = op.getX();
   Value opr = op.getY();
   Value res = op.getResult();
-  auto newMulOp = rewriter.create<arith::MulSIExtendedOp>(
+  auto newMulOp = rewriter.create<arith::MulUIExtendedOp>(
       loc, res.getType(), res.getType(), opl, opr);
   // triton only need the high value
   rewriter.replaceOp(op, ValueRange{newMulOp.getHigh()});
@@ -1970,7 +1970,7 @@ MatmulConverter::matchAndRewrite(triton::DotOp op, OpAdaptor adaptor,
   auto dstType = cast<RankedTensorType>(op.getType());
   auto elemTy = dstType.getElementType();
   auto inputPrec = op.getInputPrecision();
-  
+
   auto createOp = [&](auto &&rewriter, ValueRange operands, ValueRange results) -> Operation* {
     if (dstType.getRank() == 2)
       return rewriter.template create<linalg::MatmulOp>(op.getLoc(), operands, results);

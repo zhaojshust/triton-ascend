@@ -24,37 +24,17 @@
 #include "ascend/include/DynamicCVPipeline/Common/MemoryEffectsTracker.h"
 
 #include "mlir/Analysis/AliasAnalysis.h"
-#include "bishengir/Dialect/Scope/IR/Scope.h"
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Block.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-
-#include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
-#include "mlir/Analysis/DataFlow/SparseAnalysis.h"
-#include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/IR/Dominance.h"
-#include "triton/Analysis/Alias.h"
-#include "llvm/ADT/SmallPtrSet.h"
-
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Value.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -111,6 +91,7 @@ void DataDependencyAnalysisPass::collectBlockInfo(DataDependencyInfo& info, int 
   BlockInfo blockInfo;
   blockInfo.blockId = blockId;
   blockInfo.isCube = false;
+
   if (auto typeAttr = ops[0]->getAttrOfType<StringAttr>("ssbuffer.core_type")) {
     StringRef coreType = typeAttr.getValue();
     if (coreType.contains("CUBE")) {

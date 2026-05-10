@@ -57,6 +57,11 @@
 #include "mlir/Dialect/LLVMIR/ROCDLDialect.h"
 #include "mlir/InitAllPasses.h"
 
+#include "ascend/include/DynamicCVPipeline/SplitDataflow/AddBlockIdForControlOps.h"
+#include "ascend/include/DynamicCVPipeline/SplitDataflow/DataDependencyAnalysis.h"
+#include "ascend/include/DynamicCVPipeline/SplitDataflow/InterCoreTransferAndSync.h"
+#include "ascend/include/DynamicCVPipeline/SplitDataflow/MarkMainLoop.h"
+
 namespace mlir {
 namespace test {
 void registerTestAliasPass();
@@ -98,7 +103,12 @@ inline void registerTritonDialects(mlir::DialectRegistry &registry) {
   mlir::triton::registerConvertNVGPUToLLVMPass();
   mlir::triton::registerAllocateSharedMemoryNvPass();
   mlir::triton::registerTritonToLinalgPasses();
-
+  
+  mlir::triton::registerAddBlockIdForControlOpsPasses();
+  mlir::triton::registerDataDependencyAnalysisPasses();
+  mlir::triton::registerInterCoreTransferAndSyncPasses();
+  mlir::triton::registerMarkMainLoopPasses();
+  
   mlir::triton::registerDiscreteMaskAccessConversion();
   mlir::triton::registerTritonToStructuredPasses();
   mlir::triton::registerTritonToAnnotationPasses();

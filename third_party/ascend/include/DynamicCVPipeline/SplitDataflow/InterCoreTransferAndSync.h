@@ -51,6 +51,15 @@ public:
   // Run the pass
   void runOnOperation() override;
 
+    // Return the pass argument name
+    static constexpr ::llvm::StringRef getArgumentName() { return "inter-core-transfer-and-sync"; }
+    ::llvm::StringRef getArgument() const override { return "inter-core-transfer-and-sync"; }
+    ::llvm::StringRef getDescription() const override
+    {
+        return "Insert inter-core transfer and synchronization operations between Vector and Cube cores";
+    }
+    ::llvm::StringRef getName() const override { return "InterCoreTransferAndSyncPass"; }
+
 private:
   mlir::ModuleOp module;
   int transferIndex = 0;
@@ -126,6 +135,8 @@ private:
 };
 
 std::unique_ptr<OperationPass<ModuleOp>> createInterCoreTransferAndSyncPass();
+
+void registerInterCoreTransferAndSyncPasses();
 
 } // namespace triton
 } // namespace mlir

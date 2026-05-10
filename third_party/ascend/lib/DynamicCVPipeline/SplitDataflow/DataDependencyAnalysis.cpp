@@ -60,12 +60,10 @@
 
 using namespace mlir;
 
-static constexpr const char *DEBUG_TYPE = "DataDependencyAnalysis";
-#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
-#define LDBG(X) LLVM_DEBUG(DBGS() << (X) << "\n")
+static constexpr const char *DEBUG_TYPE = "data-dependency-analysis";
+#define LOG_DEBUG(...) LLVM_DEBUG(llvm::dbgs() << " [" << DEBUG_TYPE << "] " << __VA_ARGS__)
 
 using namespace mlir::triton;
-using namespace mlir::CVPipeline;
 
 // Helper: Get CoreType from op and index
 llvm::StringRef DataDependencyAnalysisPass::getCoreType(Operation* op, int index) {
@@ -81,7 +79,7 @@ llvm::StringRef DataDependencyAnalysisPass::getCoreType(Operation* op, int index
       return types[index].trim();
     }
 
-    LDBG("Warning: Core type string has multiple types but value is not an OpResult or index out of range.\n");
+    LOG_DEBUG("Warning: Core type string has multiple types but value is not an OpResult or index out of range.\n");
     return "";
   }
 
@@ -106,7 +104,7 @@ bool DataDependencyAnalysisPass::isControlFlowOp(mlir::Operation *op) {
 // Helper: Build and record BlockInfo
 void DataDependencyAnalysisPass::collectBlockInfo(DataDependencyInfo& info, int blockId, llvm::SmallVector<mlir::Operation*>& ops) {
   if (ops.empty()) {
-    LDBG("Warning: Block ID " << blockId << " has no operations.\n");
+    LOG_DEBUG("Warning: Block ID " << blockId << " has no operations.\n");
     return;
   }
 
@@ -154,7 +152,7 @@ void DataDependencyAnalysisPass::collectBlockInfo(DataDependencyInfo& info, int 
 
   info.getBlockInfoMap()[blockInfo.blockId] = blockInfo;
 
-  LDBG("Processed Block: ID=" << blockInfo.blockId
+  LOG_DEBUG("Processed Block: ID=" << blockInfo.blockId
                           << " Type=" << (blockInfo.isCube ? "CUBE" : "VECTOR")
                           << " OpsCount=" << ops.size() << "\n");
 }
@@ -193,31 +191,31 @@ void DataDependencyAnalysisPass::analyzeExternalInputs(DataDependencyInfo& info)
   auto& c2cDependencies = info.getC2CDependencies();
 
   // Iterate through all Cube compute blocks
-  LDBG("Analyzing external inputs for Cube blocks...\n");
+  LOG_DEBUG("Analyzing external inputs for Cube blocks...\n");
   for (auto& [id, blockInfo] : blockInfoMap) {
     if (!blockInfo.isCube || blockInfo.isControl || blockInfo.inputs.empty()) continue;
-    LDBG("Analyzing external inputs for Cube Block ID: " << id << "\n");
+    LOG_DEBUG("Analyzing external inputs for Cube Block ID: " << id << "\n");
     for (mlir::Value input : blockInfo.inputs) {
       // Check if input is a func.func blockarg.
       // If so, it's a function input parameter - skip for now (needs further thought)
       if (auto arg = mlir::dyn_cast<mlir::BlockArgument>(input)) {
-        LDBG("Warning: [v->c] Input value is a function parameter.\n");
+        LOG_DEBUG("Warning: [v->c] Input value is a function parameter.\n");
         continue;
       }
       //
       if (!dyn_cast<mlir::TensorType>(input.getType())) {
-        LDBG("Warning: ExternalInput is not TensorType\n");
+        LOG_DEBUG("Warning: ExternalInput is not TensorType\n");
         continue;
       }
       if (isa<tensor::EmptyOp, linalg::FillOp>(input.getDefiningOp())) {
-        LDBG("Warning: [v->c] Input value is defined by tensor::EmptyOp/linalg::FillOp.\n");
+        LOG_DEBUG("Warning: [v->c] Input value is defined by tensor::EmptyOp/linalg::FillOp.\n");
         continue;
       }
       Operation* defOp = input.getDefiningOp();
       auto defReuslt = dyn_cast<mlir::OpResult>(input);
       auto coreType = getCoreType(defOp, defReuslt ? defReuslt.getResultNumber() : 0);
       if (coreType == "") {
-        LDBG("Warning: [v->c] Input value has no core type attribute.\n");
+        LOG_DEBUG("Warning: [v->c] Input value has no core type attribute.\n");
         continue;
       }
 
@@ -228,29 +226,29 @@ void DataDependencyAnalysisPass::analyzeExternalInputs(DataDependencyInfo& info)
       // Case 2: Vector -> V->C dependency
       else if (coreType == "VECTOR") {
 
-        LDBG("Found external input with VECTOR core type: " << input << "\n");
+        LOG_DEBUG("Found external input with VECTOR core type: " << input << "\n");
         auto producerId = getBlockId(input);
         if (producerId != -1) {
           DependencyInfo depInfo;
           depInfo.type = DependencyType::VectorToCube;
           depInfo.value = input;
-          LDBG("try finding common level block IDs\n");
+          LOG_DEBUG("try finding common level block IDs\n");
           depInfo.iniProducerBlockId = producerId;
           depInfo.iniConsumerBlockId = blockInfo.blockId;
           std::pair<int, int> commonLevelIds = findCommonLevelBlockIds(info, producerId, blockInfo.blockId);
-          LDBG("found!\n");
+          LOG_DEBUG("found!\n");
           assert(commonLevelIds.first != -1 && commonLevelIds.second != -1 &&
                  "Could not find common level block IDs for producer and consumer blocks");
           depInfo.producerBlockId = commonLevelIds.first;
           depInfo.consumerBlockId = commonLevelIds.second;
           v2cDependencies.push_back(depInfo);
         } else {
-          LDBG("Warning: [v->c] Producer block ID not found for input value.\n");
+          LOG_DEBUG("Warning: [v->c] Producer block ID not found for input value.\n");
         }
       }
     }
   }
-  LDBG("External input analysis complete.\n");
+  LOG_DEBUG("External input analysis complete.\n");
 }
 
 // External Output Analysis (C->V)
@@ -258,18 +256,18 @@ void DataDependencyAnalysisPass::analyzeExternalOutputs(DataDependencyInfo& info
   auto& blockInfoMap = info.getBlockInfoMap();
   auto& c2vDependencies = info.getC2VDependencies();
 
-  LDBG("Analyzing external outputs for Cube blocks...\n");
+  LOG_DEBUG("Analyzing external outputs for Cube blocks...\n");
   // Iterate through all Cube compute blocks
   for (auto& [id, blockInfo] : blockInfoMap) {
     if (!blockInfo.isCube || blockInfo.outputs.empty()) continue;
     // Iterate through all outputs of this Cube block
     for (mlir::Value output : blockInfo.outputs) {
       if (!dyn_cast<mlir::TensorType>(output.getType())) {
-        LDBG("Warning: ExternalOutput is not TensorType\n");
+        LOG_DEBUG("Warning: ExternalOutput is not TensorType\n");
         continue;
       }
       if (isa<tensor::EmptyOp, linalg::FillOp>(output.getDefiningOp())) {
-        LDBG("Warning: [c->v] output value is defined by tensor::EmptyOp/linalg::FillOp.\n");
+        LOG_DEBUG("Warning: [c->v] output value is defined by tensor::EmptyOp/linalg::FillOp.\n");
         continue;
       }
       auto opResult = dyn_cast<OpResult>(output);
@@ -288,13 +286,13 @@ void DataDependencyAnalysisPass::analyzeExternalOutputs(DataDependencyInfo& info
             if (forOp.getRegionIterArg(i) == output) {
               outputIndex = i;  // Update to index in iter_args
               isDependencyValid = true;
-              LDBG("[DEBUG] Output is iter_arg #" << i << " of scf.ForOp\n");
+              LOG_DEBUG("[DEBUG] Output is iter_arg #" << i << " of scf.ForOp\n");
               break;
             }
           }
           // Only consider dependency valid when output is an iter_arg of forOp
           if (!isDependencyValid) {
-            LDBG("[DEBUG] Output is NOT an iter_arg, skipping this dependency\n");
+            LOG_DEBUG("[DEBUG] Output is NOT an iter_arg, skipping this dependency\n");
             continue;  // Skip this user
           }
         } else if (isControlFlowOp(user)) {
@@ -307,28 +305,28 @@ void DataDependencyAnalysisPass::analyzeExternalOutputs(DataDependencyInfo& info
         }
         auto userCoreType = getCoreType(user, outputIndex);
         if ((userCoreType == "")) {
-          LDBG("Warning: [c->v] Input value has no core type attribute.\n");
+          LOG_DEBUG("Warning: [c->v] Input value has no core type attribute.\n");
           continue;
         } else if (userCoreType == "VECTOR") {
-          LDBG("Found external output used by VECTOR core type: " << output << "\n");
+          LOG_DEBUG("Found external output used by VECTOR core type: " << output << "\n");
           auto consumerId = getBlockId(user->getResult(0));
           if (consumerId != -1) {
             DependencyInfo depInfo;
             depInfo.type = DependencyType::CubeToVector;
             depInfo.value = output;
-            LDBG("try finding common level block IDs\n");
+            LOG_DEBUG("try finding common level block IDs\n");
             depInfo.iniProducerBlockId = blockInfo.blockId;
             depInfo.iniConsumerBlockId = consumerId;
             std::pair<int, int> commonLevelIds = findCommonLevelBlockIds(info, blockInfo.blockId, consumerId);
             assert(commonLevelIds.first != -1 && commonLevelIds.second != -1 &&
                    "Could not find common level block IDs for producer and consumer blocks");
-            LDBG("found!\n");
+            LOG_DEBUG("found!\n");
             depInfo.producerBlockId = commonLevelIds.first;
             depInfo.consumerBlockId = commonLevelIds.second;
 
             c2vDependencies.push_back(depInfo);
           } else {
-            LDBG("Warning: [c->v] Consumer block ID not found for user operation.\n");
+            LOG_DEBUG("Warning: [c->v] Consumer block ID not found for user operation.\n");
           }
         }
 
@@ -337,7 +335,7 @@ void DataDependencyAnalysisPass::analyzeExternalOutputs(DataDependencyInfo& info
       }
     }
   }
-  LDBG("External output analysis complete.\n");
+  LOG_DEBUG("External output analysis complete.\n");
 }
 
 // C->C Special Case Analysis
@@ -353,13 +351,13 @@ void DataDependencyAnalysisPass::analyzeCubeToCubeDependencies(DataDependencyInf
         if (forOp.getRegionIterArg(i) == operand) {
           outputIndex = i;  // Update to index in iter_args
           isDependencyValid = true;
-          LDBG("[DEBUG] Output is iter_arg #" << i << " of scf.ForOp\n");
+          LOG_DEBUG("[DEBUG] Output is iter_arg #" << i << " of scf.ForOp\n");
           break;
         }
       }
       // Only consider dependency valid when output is an iter_arg of forOp
       if (!isDependencyValid) {
-        LDBG("[DEBUG] Output is NOT an iter_arg, skipping this dependency\n");
+        LOG_DEBUG("[DEBUG] Output is NOT an iter_arg, skipping this dependency\n");
         continue;  // Skip this user
       }
     } else if (isControlFlowOp(user)) {
@@ -372,7 +370,7 @@ void DataDependencyAnalysisPass::analyzeCubeToCubeDependencies(DataDependencyInf
     }
     auto userCoreType = getCoreType(user, outputIndex);
     if (userCoreType == "") {
-      LDBG("Warning: [c->c] User operation has no core type attribute.\n");
+      LOG_DEBUG("Warning: [c->c] User operation has no core type attribute.\n");
       continue;
     }
     if (userCoreType == "CUBE") {
@@ -401,7 +399,7 @@ static llvm::StringRef getOpCoreType(mlir::Operation* op) {
 void DataDependencyAnalysisPass::analyzeMemoryEffect(DataDependencyInfo& info) {
   auto& memoryDependencies = info.getMemoryDependencies();
 
-  LDBG("\n=== start mem dep analysis ===\n");
+  LOG_DEBUG("\n=== start mem dep analysis ===\n");
 
   auto& aliasAnalysis = getAnalysis<mlir::AliasAnalysis>();
   MemoryDependenceGraph memDepGraph(module, aliasAnalysis);
@@ -462,7 +460,7 @@ void DataDependencyAnalysisPass::analyzeMemoryEffect(DataDependencyInfo& info) {
 
       memoryDependencies.push_back(depInfo);
 
-      LDBG("[mem dep analysis] "
+      LOG_DEBUG("[mem dep analysis] "
                    << "producer Block: " << predBlockId
                    << " (" << predCoreType << ") -> "
                    << "consumer Block: " << currBlockId
@@ -470,8 +468,8 @@ void DataDependencyAnalysisPass::analyzeMemoryEffect(DataDependencyInfo& info) {
     }
   });
 
-  LDBG("=== mem dep analysis complete ===\n");
-  LDBG("[memoryDependencies.size]: " << memoryDependencies.size() << "\n");
+  LOG_DEBUG("=== mem dep analysis complete ===\n");
+  LOG_DEBUG("[memoryDependencies.size]: " << memoryDependencies.size() << "\n");
 }
 
 // Producer/Consumer Hierarchy Analysis
@@ -479,7 +477,7 @@ std::pair<int, int> DataDependencyAnalysisPass::findCommonLevelBlockIds(
     DataDependencyInfo& info, int producerBlockId, int consumerBlockId) {
   auto& blockInfoMap = info.getBlockInfoMap();
 
-  LDBG("start findCommonLevelBlockIds...\n");
+  LOG_DEBUG("start findCommonLevelBlockIds...\n");
 
   // Step 1: Get corresponding BlockInfo from Map
   auto pIt = blockInfoMap.find(producerBlockId);
@@ -532,12 +530,12 @@ std::pair<int, int> DataDependencyAnalysisPass::findCommonLevelBlockIds(
       if (auto attr = pPrevOp->getAttrOfType<IntegerAttr>("ssbuffer.block_id")) {
         pPrevId = attr.getInt();
       } else {
-        LDBG("Warning: Producer ancestor operation has no block ID attribute.\n");
+        LOG_DEBUG("Warning: Producer ancestor operation has no block ID attribute.\n");
       }
       if (auto attr = before->getAttrOfType<IntegerAttr>("ssbuffer.block_id")) {
         cPrevId = attr.getInt();
       } else {
-        LDBG("Warning: Consumer ancestor operation has no block ID attribute.\n");
+        LOG_DEBUG("Warning: Consumer ancestor operation has no block ID attribute.\n");
       }
       return {pPrevId, cPrevId};
     }
@@ -546,14 +544,14 @@ std::pair<int, int> DataDependencyAnalysisPass::findCommonLevelBlockIds(
     before = current;
     current = current->getParentOp();
   }
-  LDBG("Warning: No common ancestor found for producer block " << producerBlockId
+  LOG_DEBUG("Warning: No common ancestor found for producer block " << producerBlockId
                << " and consumer block " << consumerBlockId << ". Returning original IDs.\n");
   return {-1, -1};
 }
 
 void DataDependencyAnalysisPass::runOnOperation()
 {
-  LDBG("\n--- enter DataDependencyAnalysisPass --->\n");
+  LOG_DEBUG("\n--- enter DataDependencyAnalysisPass --->\n");
   module = getOperation();
 
   // 获取 DataDependencyInfo（MLIR Analysis 机制）
@@ -572,13 +570,13 @@ void DataDependencyAnalysisPass::runOnOperation()
   // 标记数据有效
   info.setValid(true);
 
-  LDBG("DataDependencyAnalysisPass: Analysis complete.\n");
-  LDBG("  V->C dependencies: " << info.getV2CDependencies().size() << "\n");
-  LDBG("  C->V dependencies: " << info.getC2VDependencies().size() << "\n");
-  LDBG("  C->C dependencies: " << info.getC2CDependencies().size() << "\n");
-  LDBG("  Memory dependencies: " << info.getMemoryDependencies().size() << "\n");
+  LOG_DEBUG("DataDependencyAnalysisPass: Analysis complete.\n");
+  LOG_DEBUG("  V->C dependencies: " << info.getV2CDependencies().size() << "\n");
+  LOG_DEBUG("  C->V dependencies: " << info.getC2VDependencies().size() << "\n");
+  LOG_DEBUG("  C->C dependencies: " << info.getC2CDependencies().size() << "\n");
+  LOG_DEBUG("  Memory dependencies: " << info.getMemoryDependencies().size() << "\n");
 
-  LDBG("\n--- exit DataDependencyAnalysisPass --->\n");
+  LOG_DEBUG("\n--- exit DataDependencyAnalysisPass --->\n");
 }
 
 // Create the pass

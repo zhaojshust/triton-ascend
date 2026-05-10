@@ -56,9 +56,8 @@
 
 using namespace mlir;
 
-static constexpr const char *DEBUG_TYPE = "InterCoreTransferAndSync";
-#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
-#define LDBG(X) LLVM_DEBUG(DBGS() << (X) << "\n")
+static constexpr const char *DEBUG_TYPE = "inter-core-transfer-and-sync";
+#define LOG_DEBUG(...) LLVM_DEBUG(llvm::dbgs() << " [" << DEBUG_TYPE << "] " << __VA_ARGS__)
 
 using namespace mlir::triton;
 using namespace hivm;
@@ -262,7 +261,7 @@ void InterCoreTransferAndSyncPass::rewriteMatmulWithNewShape(
   matmulOp->getResult(0).setType(expectedType);
   auto newMatmulOp = dyn_cast<linalg::MatmulOp>(matmulOp);
   Value newMatmulResult = newMatmulOp->getResult(0);
-  LDBG("newmatmulOp" << newMatmulOp << "\n");
+  LOG_DEBUG("newmatmulOp" << newMatmulOp << "\n");
   SmallVector<OpFoldResult> offsets = {builder.getIndexAttr(0), builder.getIndexAttr(0)};
   SmallVector<OpFoldResult> strides = {builder.getIndexAttr(1), builder.getIndexAttr(1)};
   SmallVector<OpFoldResult> sizes = {builder.getIndexAttr(accType.getShape()[0]),
@@ -280,8 +279,8 @@ void InterCoreTransferAndSyncPass::rewriteMatmulWithNewShape(
       extractSliceOp.getResult(),
       [&](OpOperand &use) { return use.getOwner() != extractSliceOp.getOperation();
   });
-  LDBG("cubeValueMapping[originalResult]" << originalResult << "\n");
-  LDBG("cubeValueMapping[originalResult]extractSliceOp.getResult()   " << extractSliceOp.getResult() << "\n");
+  LOG_DEBUG("cubeValueMapping[originalResult]" << originalResult << "\n");
+  LOG_DEBUG("cubeValueMapping[originalResult]extractSliceOp.getResult()   " << extractSliceOp.getResult() << "\n");
   cubeValueMapping[originalResult] = extractSliceOp.getResult();
 }
 
@@ -411,12 +410,12 @@ void InterCoreTransferAndSyncPass::Nd2NzNormalize(OpBuilder &builder, Dependency
     attachCommonTags(transposeOp, originBlockId, "VECTOR");
     attachCommonTags(reshape4Dcst, originBlockId, "VECTOR");
     attachCommonTags(reshape4DOp, originBlockId, "VECTOR");
-    LDBG("[reshape3Dcst]: " << *reshape3Dcst << "\n");
-    LDBG("[reshape3DOp]: " << *reshape3DOp << "\n");
-    LDBG("[emptyTrans]: " << emptyTrans << "\n");
-    LDBG("[transposeOp]: " << *transposeOp << "\n");
-    LDBG("[reshape4Dcst]: " << *reshape4Dcst << "\n");
-    LDBG("[reshape4DOp]: " << *reshape4DOp << "\n");
+    LOG_DEBUG("[reshape3Dcst]: " << *reshape3Dcst << "\n");
+    LOG_DEBUG("[reshape3DOp]: " << *reshape3DOp << "\n");
+    LOG_DEBUG("[emptyTrans]: " << emptyTrans << "\n");
+    LOG_DEBUG("[transposeOp]: " << *transposeOp << "\n");
+    LOG_DEBUG("[reshape4Dcst]: " << *reshape4Dcst << "\n");
+    LOG_DEBUG("[reshape4DOp]: " << *reshape4DOp << "\n");
     vecValueMapping[origValue] = reshape4DOp.getResult();
   }
 }
@@ -451,7 +450,7 @@ Operation* InterCoreTransferAndSyncPass::findMainLoopforTransfer(Operation* endO
 }
 
 Operation* InterCoreTransferAndSyncPass::insertVectorToCubeTransfer(OpBuilder &builder, Value srcValue, Value normalizedValue, Operation* vectorEndOp, Operation* cubeStartOp, Location loc, int transferIndex, int iniConsumerId) {
-  LDBG("Inserting [Vector->Cube] transfer for value: " << srcValue << "\n");
+  LOG_DEBUG("Inserting [Vector->Cube] transfer for value: " << srcValue << "\n");
   // Step 1: Get input information (2D tensor: MxN)
   auto srcTensorType = cast<RankedTensorType>(srcValue.getType());
   auto normalizedTensorType = cast<RankedTensorType>(normalizedValue.getType());
@@ -508,7 +507,7 @@ Operation* InterCoreTransferAndSyncPass::insertVectorToCubeTransfer(OpBuilder &b
 
   attachTransferTags(copyOp, vecBlockId, "VECTOR", transferIndex);
 
-  LDBG("[copyOp]: " << *copyOp << "\n");
+  LOG_DEBUG("[copyOp]: " << *copyOp << "\n");
 
   builder.setInsertionPoint(cubeStartOp);
 
@@ -544,9 +543,9 @@ Operation* InterCoreTransferAndSyncPass::insertVectorToCubeTransfer(OpBuilder &b
   attachTransferTags(convertLayoutOp, cubeBlockId, "CUBE", transferIndex);
   attachTransferTags(memspaceCastOp, cubeBlockId, "CUBE", transferIndex);
   attachTransferTags(toTensorOp, cubeBlockId, "CUBE", transferIndex);
-  LDBG("[convertLayoutOp]: " << *convertLayoutOp << "\n");
-  LDBG("[memspaceCastOp]: " << *memspaceCastOp << "\n");
-  LDBG("[toTensorOp]: " << *toTensorOp << "\n");
+  LOG_DEBUG("[convertLayoutOp]: " << *convertLayoutOp << "\n");
+  LOG_DEBUG("[memspaceCastOp]: " << *memspaceCastOp << "\n");
+  LOG_DEBUG("[toTensorOp]: " << *toTensorOp << "\n");
 
   for (Operation* user : srcValue.getUsers()) {
     auto userIdAttr = user->getAttrOfType<IntegerAttr>("ssbuffer.block_id");
@@ -559,7 +558,7 @@ Operation* InterCoreTransferAndSyncPass::insertVectorToCubeTransfer(OpBuilder &b
 }
 
 Operation* InterCoreTransferAndSyncPass::insertCubeToVectorTransfer(OpBuilder &builder, Value srcValue, Operation* cubeEndOp, Operation* vectorStartOp, Location loc, int transferIndex, int iniConsumerId) {
-  LDBG("Inserting [Cube->Vector] transfer for value: " << srcValue << "\n");
+  LOG_DEBUG("Inserting [Cube->Vector] transfer for value: " << srcValue << "\n");
   auto srcTensorType = cast<RankedTensorType>(srcValue.getType());
   int64_t M = srcTensorType.getDimSize(0);
   int64_t N = srcTensorType.getDimSize(1);
@@ -582,7 +581,7 @@ Operation* InterCoreTransferAndSyncPass::insertCubeToVectorTransfer(OpBuilder &b
   // Allocate memory outside mainloop
   Operation* mainLoopOp = findMainLoopforTransfer(cubeEndOp, vectorStartOp);
   if (mainLoopOp) {
-    LDBG("[mainLoopOp]" << *mainLoopOp << "\n");
+    LOG_DEBUG("[mainLoopOp]" << *mainLoopOp << "\n");
     builder.setInsertionPoint(mainLoopOp);
     cubeAllocOp = builder.create<memref::AllocOp>(loc, allocType);
     auto markCubeAllocOp = annotateTightlyCoupledBuffer(builder, cubeAllocOp, loc);
@@ -595,8 +594,8 @@ Operation* InterCoreTransferAndSyncPass::insertCubeToVectorTransfer(OpBuilder &b
     attachTransferTags(markVecAllocOp, loopBlockId, "VECTOR", transferIndex);
     attachTransferTags(markCubeAllocOp, loopBlockId, "CUBE", transferIndex);
     builder.setInsertionPointAfter(cubeEndOp);
-    LDBG("[cubeAllocOp]" << *cubeAllocOp << "\n");
-    LDBG("[vecAllocOp]" << *vecAllocOp << "\n");
+    LOG_DEBUG("[cubeAllocOp]" << *cubeAllocOp << "\n");
+    LOG_DEBUG("[vecAllocOp]" << *vecAllocOp << "\n");
   } else {
     builder.setInsertionPoint(vectorStartOp);
     vecAllocOp = builder.create<memref::AllocOp>(loc, allocType);
@@ -608,8 +607,8 @@ Operation* InterCoreTransferAndSyncPass::insertCubeToVectorTransfer(OpBuilder &b
     attachTransferTags(vecAllocOp, vecBlockId, "VECTOR", transferIndex);
     attachTransferTags(markVecAllocOp, vecBlockId, "VECTOR", transferIndex);
     attachTransferTags(markCubeAllocOp, cubeBlockId, "CUBE", transferIndex);
-    LDBG("[cubeAllocOp]" << *cubeAllocOp << "\n");
-    LDBG("[vecAllocOp]" << *vecAllocOp << "\n");
+    LOG_DEBUG("[cubeAllocOp]" << *cubeAllocOp << "\n");
+    LOG_DEBUG("[vecAllocOp]" << *vecAllocOp << "\n");
   }
   markAllocIndex++;
 
@@ -627,7 +626,7 @@ Operation* InterCoreTransferAndSyncPass::insertCubeToVectorTransfer(OpBuilder &b
       /*channel_split=*/nullptr,
       /*unit_flag_mode=*/mlir::ArrayAttr{});
   attachTransferTags(fixpipeOp, cubeBlockId, "CUBE", transferIndex);
-  LDBG("[fixpipeOp]: " << *fixpipeOp << "\n");
+  LOG_DEBUG("[fixpipeOp]: " << *fixpipeOp << "\n");
 
   // Vector side: memspace_cast + to_tensor
   builder.setInsertionPoint(vectorStartOp);
@@ -645,8 +644,8 @@ Operation* InterCoreTransferAndSyncPass::insertCubeToVectorTransfer(OpBuilder &b
 
   attachTransferTags(memspaceCastOp, vecBlockId, "VECTOR", transferIndex);
   attachTransferTags(toTensorOp, vecBlockId, "VECTOR", transferIndex);
-  LDBG("[memspaceCastOp]: " << *memspaceCastOp << "\n");
-  LDBG("[toTensorOp]: " << *toTensorOp << "\n");
+  LOG_DEBUG("[memspaceCastOp]: " << *memspaceCastOp << "\n");
+  LOG_DEBUG("[toTensorOp]: " << *toTensorOp << "\n");
 
   for (Operation* user : srcValue.getUsers()) {
     auto userIdAttr = user->getAttrOfType<IntegerAttr>("ssbuffer.block_id");
@@ -659,7 +658,7 @@ Operation* InterCoreTransferAndSyncPass::insertCubeToVectorTransfer(OpBuilder &b
 }
 
 void InterCoreTransferAndSyncPass::insertInterCoreSync(OpBuilder &builder, Operation* transferOp, Operation* consumerStartOp, Operation* consumerEndOp, int flag, Location loc, int transferIndex) {
-  LDBG("Inserting inter-core synchronization for transferOp: " << *transferOp << "\n");
+  LOG_DEBUG("Inserting inter-core synchronization for transferOp: " << *transferOp << "\n");
   auto cubeCoreAttr = hivm::TCoreTypeAttr::get(builder.getContext(), hivm::TCoreType::CUBE);
   auto vecCoreAttr = hivm::TCoreTypeAttr::get(builder.getContext(), hivm::TCoreType::VECTOR);
   auto pipeFixAttr = PipeAttr::get(builder.getContext(), hivm::PIPE::PIPE_FIX);
@@ -740,7 +739,7 @@ void InterCoreTransferAndSyncPass::insertPipeSSync(OpBuilder &builder,
                                         int flag,
                                         Location loc,
                                         bool isCubeToVector) {
-  LDBG("Inserting PIPE_S sync: "
+  LOG_DEBUG("Inserting PIPE_S sync: "
                << (isCubeToVector ? "CUBE->VECTOR" : "VECTOR->CUBE")
                << ", flag = " << flag << "\n");
 
@@ -778,8 +777,8 @@ void InterCoreTransferAndSyncPass::insertPipeSSync(OpBuilder &builder,
     attachCommonTags(waitOp, consBlockId, consCoreType);
   }
 
-  LDBG("[PIPE_S setOp]: " << *setOp << "\n");
-  LDBG("[PIPE_S waitOp]: " << *waitOp << "\n");
+  LOG_DEBUG("[PIPE_S setOp]: " << *setOp << "\n");
+  LOG_DEBUG("[PIPE_S waitOp]: " << *waitOp << "\n");
 }
 
 // V->C Transfer Logic
@@ -811,7 +810,7 @@ LogicalResult InterCoreTransferAndSyncPass::handleVectorToCube(
   insertInterCoreSync(builder, transferOp, newConsStart, newConsEnd, flagId, loc, transferIndex);
 
   transferIndex++;
-  LDBG("Inserted V->C transfer and sync: block " << dep.producerBlockId
+  LOG_DEBUG("Inserted V->C transfer and sync: block " << dep.producerBlockId
             << " -> block " << dep.consumerBlockId << "\n");
   return success();
 }
@@ -830,10 +829,10 @@ LogicalResult InterCoreTransferAndSyncPass::handleCubeToVector(
   Location loc = srcValue.getLoc();
   auto [prodStart, prodEnd] = getBlockStartEnd(dep.producerBlockId, module); // C Block
   auto [consStart, consEnd] = getBlockStartEnd(dep.consumerBlockId, module); // V Block
-  LDBG("[newProdStart]" << *prodStart << "\n");
-  LDBG("[newProdEnd]" << *prodEnd << "\n");
-  LDBG("[newConsStart]" << *consStart << "\n");
-  LDBG("[newConsEnd]" << *consEnd << "\n");
+  LOG_DEBUG("[newProdStart]" << *prodStart << "\n");
+  LOG_DEBUG("[newProdEnd]" << *prodEnd << "\n");
+  LOG_DEBUG("[newConsStart]" << *consStart << "\n");
+  LOG_DEBUG("[newConsEnd]" << *consEnd << "\n");
   Operation* transferOp = insertCubeToVectorTransfer(builder, srcValue, prodEnd, consStart, loc, transferIndex, dep.iniConsumerBlockId);
 
   auto [newProdStart, newProdEnd] = getBlockStartEnd(dep.producerBlockId, module); // C Block
@@ -842,7 +841,7 @@ LogicalResult InterCoreTransferAndSyncPass::handleCubeToVector(
   insertInterCoreSync(builder, transferOp, newConsStart, newConsEnd, flagId, loc, transferIndex);
 
   transferIndex++;
-  LDBG("Inserted C->V transfer and sync: block " << dep.producerBlockId
+  LOG_DEBUG("Inserted C->V transfer and sync: block " << dep.producerBlockId
             << " -> block " << dep.consumerBlockId << "\n");
   return success();
 }
@@ -854,19 +853,19 @@ LogicalResult InterCoreTransferAndSyncPass::handleMemoryDependency(
     size_t depIndex,
     llvm::SmallVector<DependencyInfo> memDependencies,
     FlagIdManager& flagManager) {
-  LDBG("Handling PIPE_S memory dependency...\n");
+  LOG_DEBUG("Handling PIPE_S memory dependency...\n");
 
   // Get producer and consumer block start/end operations
   auto [prodStart, prodEnd] = getBlockStartEnd(dep.producerBlockId, module);
   auto [consStart, consEnd] = getBlockStartEnd(dep.consumerBlockId, module);
 
   if (!prodStart || !prodEnd || !consStart || !consEnd) {
-    LDBG("[ERROR] Failed to get block start/end operations.\n");
+    LOG_DEBUG("[ERROR] Failed to get block start/end operations.\n");
     return failure();
   }
 
   if (isOuterLayerDependency(depIndex, prodEnd, consStart, memDependencies)) {
-    LDBG("[PIPE_S] Skipping outer layer dependency: block " << dep.producerBlockId
+    LOG_DEBUG("[PIPE_S] Skipping outer layer dependency: block " << dep.producerBlockId
              << " -> block " << dep.consumerBlockId << "\n");
     return success();
   }
@@ -885,7 +884,7 @@ LogicalResult InterCoreTransferAndSyncPass::handleMemoryDependency(
 
   transferIndex++;
 
-  LDBG("Inserted PIPE_S sync: block " << dep.producerBlockId
+  LOG_DEBUG("Inserted PIPE_S sync: block " << dep.producerBlockId
                << " -> block " << dep.consumerBlockId
                << ", flagId = " << flagId << "\n");
 
@@ -894,17 +893,17 @@ LogicalResult InterCoreTransferAndSyncPass::handleMemoryDependency(
 
 // Main Processing
 LogicalResult InterCoreTransferAndSyncPass::processDependencies(FlagIdManager& flagManager) {
-  LDBG("Starting InterCoreTransferAndSyncPass processDependencies...\n");
+  LOG_DEBUG("Starting InterCoreTransferAndSyncPass processDependencies...\n");
   OpBuilder builder(module.getContext());
 
   auto& info = getAnalysis<DataDependencyInfo>();
   if (!info.isValid()) {
-    LDBG("Error: Data dependency analysis failed.\n");
+    LOG_DEBUG("Error: Data dependency analysis failed.\n");
     return failure();
   }
 
   llvm::SmallVector<DependencyInfo>& V2CDependencies = info.getV2CDependencies();
-  LDBG("[DEBUG] V2CDependencies size: " << V2CDependencies.size() << "\n");
+  LOG_DEBUG("[DEBUG] V2CDependencies size: " << V2CDependencies.size() << "\n");
   // Step 1: Handle V->C dependencies
   for (auto& dep : V2CDependencies) {
     Location loc = dep.value.getLoc();
@@ -913,47 +912,47 @@ LogicalResult InterCoreTransferAndSyncPass::processDependencies(FlagIdManager& f
   llvm::DenseMap<mlir::Value, mlir::Value> vecvalueMapping = getVecValueMapping();
   llvm::DenseMap<mlir::Value, mlir::Value> cubevalueMapping = getCubeValueMapping();
   for (auto& dep : V2CDependencies) {
-    LDBG("[V->C] producerBlockId = " << dep.producerBlockId
+    LOG_DEBUG("[V->C] producerBlockId = " << dep.producerBlockId
             << ", consumerBlockId = " << dep.consumerBlockId << "\n");
     if (failed(handleVectorToCube(builder, dep, vecvalueMapping, cubevalueMapping, flagManager))) {
-      LDBG("[ERROR] V->C failed! producerBlockId = " << dep.producerBlockId
+      LOG_DEBUG("[ERROR] V->C failed! producerBlockId = " << dep.producerBlockId
                   << ", consumerBlockId = " << dep.consumerBlockId << "\n");
       return failure();
     }
   }
-  LDBG("Completed V->C transfers and syncs.\n");
+  LOG_DEBUG("Completed V->C transfers and syncs.\n");
 
   llvm::SmallVector<DependencyInfo>& C2VDependencies = info.getC2VDependencies();
-  LDBG("[DEBUG] C2VDependencies size: " << C2VDependencies.size() << "\n");
+  LOG_DEBUG("[DEBUG] C2VDependencies size: " << C2VDependencies.size() << "\n");
   // Step 2: Handle C->V dependencies
   for (auto& dep : C2VDependencies) {
-    LDBG("[C->V] producerBlockId = " << dep.producerBlockId
+    LOG_DEBUG("[C->V] producerBlockId = " << dep.producerBlockId
                 << ", consumerBlockId = " << dep.consumerBlockId << "\n");
     if (failed(handleCubeToVector(builder, dep, cubevalueMapping, flagManager))) {
-    LDBG("[ERROR] C->V failed!  producerBlockId = " << dep.producerBlockId
+    LOG_DEBUG("[ERROR] C->V failed!  producerBlockId = " << dep.producerBlockId
                 << ", consumerBlockId = " << dep.consumerBlockId << "\n");
       return failure();
     }
   }
-  LDBG("Completed C->V transfers and syncs.\n");
+  LOG_DEBUG("Completed C->V transfers and syncs.\n");
 
   llvm::SmallVector<DependencyInfo>& memDependencies = info.getMemoryDependencies();
-  LDBG("[DEBUG] MemoryDependencies size: " << memDependencies.size() << "\n");
+  LOG_DEBUG("[DEBUG] MemoryDependencies size: " << memDependencies.size() << "\n");
 
   for (size_t i = 0; i < memDependencies.size(); ++i) {
     auto& dep = memDependencies[i];
-    LDBG("[PIPE_S] value = " << dep.value
+    LOG_DEBUG("[PIPE_S] value = " << dep.value
                  << " producerBlockId = " << dep.producerBlockId
                  << ", consumerBlockId = " << dep.consumerBlockId << "\n");
     if (failed(handleMemoryDependency(builder, dep, i, memDependencies, flagManager))) {
-      LDBG("[ERROR] PIPE_S failed! producerBlockId = " << dep.producerBlockId
+      LOG_DEBUG("[ERROR] PIPE_S failed! producerBlockId = " << dep.producerBlockId
                    << ", consumerBlockId = " << dep.consumerBlockId << "\n");
       return failure();
     }
   }
-  LDBG("Completed PIPE_S memory syncs.\n");
-  LDBG("=====================================================\n");
-  LDBG("InterCoreTransferAndSyncPass success!\n");
+  LOG_DEBUG("Completed PIPE_S memory syncs.\n");
+  LOG_DEBUG("=====================================================\n");
+  LOG_DEBUG("InterCoreTransferAndSyncPass success!\n");
 
   return success();
 }
@@ -977,7 +976,7 @@ void InterCoreTransferAndSyncPass::getDependentDialects(DialectRegistry &registr
 // Pass Entry Point
 void InterCoreTransferAndSyncPass::runOnOperation()
 {
-  LDBG("\n--- enter InterCoreTransferAndSyncPass --->\n");
+  LOG_DEBUG("\n--- enter InterCoreTransferAndSyncPass --->\n");
   module = getOperation();
 
   // Phase 1: Initialize FlagIdManager as local variable
@@ -986,11 +985,11 @@ void InterCoreTransferAndSyncPass::runOnOperation()
   // Phase 2: Execute transfer and sync insertion
   if (failed(processDependencies(flagManager))) {
     signalPassFailure();
-    LDBG("Error: Inter-core transfer and sync failed.\n");
+    LOG_DEBUG("Error: Inter-core transfer and sync failed.\n");
     return;
   }
 
-  LDBG("--- exit InterCoreTransferAndSyncPass --->\n");
+  LOG_DEBUG("--- exit InterCoreTransferAndSyncPass --->\n");
 }
 
 // Create the pass

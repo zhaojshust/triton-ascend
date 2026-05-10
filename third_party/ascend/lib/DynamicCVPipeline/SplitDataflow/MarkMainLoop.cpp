@@ -27,16 +27,15 @@
 
 using namespace mlir;
 
-static constexpr const char *DEBUG_TYPE = "MarkMainLoop";
-#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
-#define LDBG(X) LLVM_DEBUG(DBGS() << (X) << "\n")
+static constexpr const char *DEBUG_TYPE = "mark-main-loop";
+#define LOG_DEBUG(...) LLVM_DEBUG(llvm::dbgs() << " [" << DEBUG_TYPE << "] " << __VA_ARGS__)
 
 using namespace mlir::triton;
 
 // Pass Entry Point
 void MarkMainLoopPass::runOnOperation()
 {
-  LDBG("\n--- enter MarkMainLoopPass --->\n");
+  LOG_DEBUG("\n--- enter MarkMainLoopPass --->\n");
   ModuleOp module = getOperation();
 
   int mainLoopIdCounter = 0;
@@ -83,7 +82,7 @@ void MarkMainLoopPass::runOnOperation()
     }
   }
 
-  LDBG("--- exit MarkMainLoopPass --->\n");
+  LOG_DEBUG("--- exit MarkMainLoopPass --->\n");
 }
 
 // Create the pass

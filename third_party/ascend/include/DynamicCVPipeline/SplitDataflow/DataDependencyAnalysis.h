@@ -39,8 +39,7 @@ namespace triton {
 
 enum class DependencyType {
   VectorToCube,
-  CubeToVector,
-  CubeToCube
+  CubeToVector
 };
 
 struct BlockInfo {
@@ -79,7 +78,6 @@ public:
   llvm::DenseMap<int, BlockInfo>& getBlockInfoMap() { return blockInfoMap; }
   llvm::SmallVector<DependencyInfo>& getV2CDependencies() { return v2cDependencies; }
   llvm::SmallVector<DependencyInfo>& getC2VDependencies() { return c2vDependencies; }
-  llvm::SmallVector<DependencyInfo>& getC2CDependencies() { return c2cDependencies; }
   llvm::SmallVector<DependencyInfo>& getMemoryDependencies() { return memoryDependencies; }
 
   void setValid(bool v) { valid = v; }
@@ -109,16 +107,17 @@ private:
   void createBlockInfoMap(DataDependencyInfo& info);
   void collectBlockInfo(DataDependencyInfo& info, int blockId, llvm::SmallVector<mlir::Operation*>& ops);
 
+  void collectDepInfo(mlir::Value depvalue, DependencyType dependencyType, 
+                      llvm::SmallVector<DependencyInfo>& dependencies,
+                      int iniProdId, int iniConsId,
+                      DataDependencyInfo& info);
   void analyzeExternalInputs(DataDependencyInfo& info);
   void analyzeExternalOutputs(DataDependencyInfo& info);
-  void analyzeCubeToCubeDependencies(DataDependencyInfo& info, int consumerBlockId, mlir::Value operand);
 
   void analyzeMemoryEffect(DataDependencyInfo& info);
   std::pair<int, int> findCommonLevelBlockIds(DataDependencyInfo& info, int producerBlockId, int consumerBlockId);
 
   bool isControlFlowOp(mlir::Operation *op);
-  llvm::StringRef getCoreType(mlir::Operation* op, int index);
-  int getBlockId(mlir::Value val);
 
   mlir::ModuleOp module;
 };

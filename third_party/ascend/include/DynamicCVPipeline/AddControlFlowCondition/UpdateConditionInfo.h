@@ -53,7 +53,7 @@ public:
     void setConditionInfo(ControlFlowConditionInfo *info) { this->info = info; }
 
 private:
-    SmallVector<SmallVector<Value> > initSSBuffer(ModuleOp module);
+    SmallVector<SmallVector<Value> > allocSSBuffer(ModuleOp module);
 
     int updateIfConds(ModuleOp module, SmallVector<SmallVector<Value> > ssbufferPtrs);
 
@@ -79,26 +79,25 @@ private:
                          const DenseMap<int, DenseMap<Value, SmallVector<Value> > > &intraCoreBuffers,
                          DenseMap<int, Value> &idxToVar);
 
-    void getInputOutputValues(scf::IfOp ifOp, DenseMap<int, DenseMap<Value, SmallVector<Value> > > crossCoreBuffers,
+    int getInputOutputValues(scf::IfOp ifOp, DenseMap<int, DenseMap<Value, SmallVector<Value> > > crossCoreBuffers,
                               DenseMap<int, DenseMap<Value, SmallVector<Value> > > intraCoreBuffers,
                               SmallVector<int> &crossCoreInputValues, SmallVector<int> &crossCoreOutputValues,
                               SmallVector<int> &intraCoreInputValues, SmallVector<int> &intraCoreOutputValues);
 
-    SmallVector<OutputGroupInfo>
-    buildOutputGroups(SmallVector<int> &intraCoreOutputValues,
-                      DenseMap<int, DenseMap<Value, SmallVector<Value> > > &intraCoreBuffers,
-                      DenseMap<int, Value> &idxToVar);
+    int buildOutputGroups(SmallVector<int> &intraCoreOutputValues,
+                          DenseMap<int, DenseMap<Value, SmallVector<Value> > > &intraCoreBuffers,
+                          DenseMap<int, Value> &idxToVar, SmallVector<OutputGroupInfo> &outputGroups);
 
     void collectIntraCoreInputConditions(OpBuilder &builder, Location loc, SmallVector<int> &intraCoreInputValues,
                                          DenseMap<int, Value> &idxToVar, SmallVector<Value> &conditions,
                                          DenseSet<Value> &usedVarsSet,
                                          DenseMap<Value, VarUpdateType> &varUpdateTypes);
 
-    void collectIntraCoreOutputConditions(OpBuilder &builder, Location loc,
-                                          DenseMap<int, DenseMap<Value, SmallVector<Value> > > &intraCoreBuffers,
-                                          SmallVector<int> &intraCoreOutputValues, DenseMap<int, Value> &idxToVar,
-                                          SmallVector<Value> &conditions, DenseSet<Value> &usedVarsSet,
-                                          DenseMap<Value, VarUpdateType> &varUpdateTypes);
+    int collectIntraCoreOutputConditions(OpBuilder &builder, Location loc,
+                                         DenseMap<int, DenseMap<Value, SmallVector<Value> > > &intraCoreBuffers,
+                                         SmallVector<int> &intraCoreOutputValues, DenseMap<int, Value> &idxToVar,
+                                         SmallVector<Value> &conditions, DenseSet<Value> &usedVarsSet,
+                                         DenseMap<Value, VarUpdateType> &varUpdateTypes);
 
     SmallVector<Type> buildNewIfResultTypes(scf::IfOp oldIfOp, bool hasCounter, Value counter);
 
@@ -115,21 +114,22 @@ private:
                                       DenseMap<Value, VarUpdateType> &varUpdateTypes, bool hasCounter, Value counter,
                                       Value step);
 
-    Value setIntraCoreCondition(ModuleOp module, scf::IfOp ifOp,
-                                DenseMap<int, DenseMap<Value, SmallVector<Value> > > &intraCoreBuffers,
-                                SmallVector<int> &intraCoreInputIndices, SmallVector<int> &intraCoreOutputIndices,
-                                DenseMap<int, Value> &idxToVar, DenseMap<Value, VarUpdateType> &varUpdateTypes);
+    int setIntraCoreCondition(ModuleOp module, scf::IfOp ifOp,
+                              DenseMap<int, DenseMap<Value, SmallVector<Value> > > &intraCoreBuffers,
+                              SmallVector<int> &intraCoreInputIndices, SmallVector<int> &intraCoreOutputIndices,
+                              DenseMap<int, Value> &idxToVar, DenseMap<Value, VarUpdateType> &varUpdateTypes,
+                              Value &intraCoreCond);
 
     void updateControlVarToLatestValue(scf::IfOp newIfOp, scf::IfOp oldIfOp, bool hasCounter, Value counter);
 
-    void updateForOpYield(scf::ForOp forOp);
+    int updateForOpYield(scf::ForOp forOp);
 
-    void combineConditions(ModuleOp module, Value crossCoreCond, Value intraCoreCond, scf::IfOp ifOp, scf::ForOp forOp,
-                           size_t &usedCounterNum, DenseMap<Value, VarUpdateType> &varUpdateTypes);
+    int combineConditions(ModuleOp module, Value crossCoreCond, Value intraCoreCond, scf::IfOp ifOp, scf::ForOp forOp,
+                          size_t &usedCounterNum, DenseMap<Value, VarUpdateType> &varUpdateTypes);
 
-    Value setCrossCoreCondition(SmallVector<int> crossCoreInputValues, SmallVector<int> crossCoreOutputValues,
-                                DenseMap<int, DenseMap<Value, SmallVector<Value> > > &crossCoreBuffers, scf::IfOp ifOp,
-                                SmallVector<SmallVector<Value> > ssbufferPtrs);
+    int setCrossCoreCondition(SmallVector<int> crossCoreInputValues, SmallVector<int> crossCoreOutputValues,
+                               DenseMap<int, DenseMap<Value, SmallVector<Value> > > &crossCoreBuffers, scf::IfOp ifOp,
+                               SmallVector<SmallVector<Value> > ssbufferPtrs, Value &crossCoreCond);
 
     // Helper function to get pointer based on core type
     Value getSSBufferPtr(bool isAIC, int groupIdx, int ptrSetIdx,

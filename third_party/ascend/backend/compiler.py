@@ -457,8 +457,8 @@ def linalg_to_bin_enable_npu_compile_910_95(linalg: str, metadata, opt):
             env_vf.lower() in ("true", "1", "yes") if env_vf is not None
             else metadata.get("enable_vf_fusion", False)
         )
-        if enable_vf_fusion:
-            _compile_option_list += ["--enable-vf-fusion"]
+        if enable_vf_fusion is not None:
+            _compile_option_list += [f"--enable-vf-fusion={enable_vf_fusion}"]
 
         enable_drop_unit_dims = metadata["enable_drop_unit_dims"]
         if enable_drop_unit_dims is not None:

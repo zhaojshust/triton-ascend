@@ -135,6 +135,9 @@ std::unique_ptr<OperationPass<ModuleOp>> createDataDependencyAnalysisPass();
 
 void registerDataDependencyAnalysisPasses();
 
+// Helper: Get BlockId
+int getSsbufferBlockId(Operation* op);
+
 } // namespace triton
 } // namespace mlir
 

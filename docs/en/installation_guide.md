@@ -67,7 +67,7 @@ pip install torch==2.7.1+cpu --index-url https://download.pytorch.org/whl/cpu
 You can install the latest stable version of Triton-Ascend using pip.
 
 ```shell
-pip install triton-ascend
+pip install triton-ascend==3.2.1 --extra-index-url=https://triton-ascend.osinfra.cn/pypi/simple
 ```
 
 - Note: for Triton-Ascend 3.2.0 and earlier versions：Triton-Ascend and Triton cannot coexist.You need to uninstall the community Triton first before installing Triton-Ascend.<br>
@@ -80,22 +80,14 @@ Specifically,x86 depends on triton==3.2.0,and arm depends on triton==3.5.0.
 ```shell
 pip uninstall triton
 pip uninstall triton-ascend
-pip install triton-ascend
+pip install triton-ascend==3.2.1 --extra-index-url=https://triton-ascend.osinfra.cn/pypi/simple
 ```
 
-### Nightly Build Version
-
-We provide daily updated nightly packages. You can run the following command to install them:
+### Historical Stable Version
 
 ```shell
-pip install -i https://test.pypi.org/simple/ "triton-ascend<3.2.0rc" --pre --no-cache-dir
+pip install triton-ascend==3.2.0
 ```
-
-You can also find all nightly build packages in [History](https://test.pypi.org/project/triton-ascend/#history).
-
-Note: If you encounter SSL-related errors when running the `pip install` command, add the `--trusted-host test.pypi.org --trusted-host test-files.pythonhosted.org` option to solve them.
-
-<a id="code-base"></a>
 
 ## Installing Triton-Ascend Using the Source Code
 
@@ -109,7 +101,6 @@ We recommend completing the source installation of Triton-Ascend using the <a hr
 
 | Pytorch Version | Recommended GCC version | Recommended GLIBC version |
 |-------------------|----------------------|--------------------|
-| PyTorch2.6.0      | (aarch64)11.2.1<br>(x86) 9.3.1 | (aarch64)>=2.28<br>(x86)>=2.17 |
 | PyTorch2.7.1      | 11.2.1               | 2.28               |
 | PyTorch2.8.0      | 13.3.1               | 2.28               |
 | PyTorch2.9.1      | 13.3.1               | 2.28               |

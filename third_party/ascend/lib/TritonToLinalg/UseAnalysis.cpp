@@ -159,6 +159,11 @@ void triton::UseAnalysis::visitOperation(Operation *op,
       .Case<hivm::CopyOp>([&](auto copyOp) {
         propagateUse(operands[0], UseType::DataUse);
       })
+      .Case<hivm::CustomOp>([&](auto customOp) {
+        for (auto operand : operands) {
+          propagateUse(operand, UseType::MixUse);
+        }
+      })
       .Default([&](Operation *op) {
         // this condition account for tt.addptr
         for (auto operand : operands) {

@@ -53,10 +53,12 @@ using namespace hivm;
 static bool compileOn91095Flag = false;
 static bool forceSimtTemplateFlag = false;
 static bool enableSyncBlockLockFlag = true;
+static constexpr const char *routeDiscreteMaskToSimtAttrName =
+    "route_discrete_mask_to_simt";
 
 LogicalResult isDiscreteMask(Operation *op, Value mask,
                              PatternRewriter &rewriter) {
-  if (!mask || op->hasAttr("is_discrete_mask")) {
+  if (!mask || op->hasAttr(routeDiscreteMaskToSimtAttrName)) {
     return failure();
   }
 
@@ -161,8 +163,7 @@ struct DiscreteMaskStoreConversion : OpRewritePattern<triton::StoreOp> {
     if (failed(isDiscreteMask(op, mask, rewriter)))
       return failure();
 
-    const std::string isDiscreteMaskTag = "is_discrete_mask";
-    op->setAttr(isDiscreteMaskTag, rewriter.getUnitAttr());
+    op->setAttr(routeDiscreteMaskToSimtAttrName, rewriter.getUnitAttr());
 
     auto ptr = op.getPtr();
     auto ptrType = dyn_cast<RankedTensorType>(ptr.getType());
@@ -231,8 +232,7 @@ struct DiscreteMaskLoadConversion : OpRewritePattern<triton::LoadOp> {
     if (failed(isDiscreteMask(op, mask, rewriter)))
       return failure();
 
-    const std::string isDiscreteMaskTag = "is_discrete_mask";
-    op->setAttr(isDiscreteMaskTag, rewriter.getUnitAttr());
+    op->setAttr(routeDiscreteMaskToSimtAttrName, rewriter.getUnitAttr());
 
     auto ptrType = dyn_cast<RankedTensorType>(ptr.getType());
     bool rankWithinIndirectFastPathLimit = ptrType && ptrType.getShape().size() <= 5;
@@ -294,6 +294,12 @@ struct DiscreteMaskAtomicConversion : OpRewritePattern<mlir::triton::AtomicRMWOp
     if (failed(isDiscreteMask(op, mask, rewriter)))
       return failure();
 
+    op->setAttr(routeDiscreteMaskToSimtAttrName, rewriter.getUnitAttr());
+
+    if (compileOn91095Flag && forceSimtTemplateFlag) {
+      return failure();
+    }
+
     const std::map<RMWOp, TypelessValue> initMap = {
         {RMWOp::FADD, TypelessValue::Zero},
         {RMWOp::ADD, TypelessValue::Zero},
@@ -317,8 +323,14 @@ struct DiscreteMaskAtomicConversion : OpRewritePattern<mlir::triton::AtomicRMWOp
 
     FailureOr<mlir::Value> fill = specializeTypelessValueToConstant(
         typelessVal, src.getType(), loc, rewriter);
-    if (failed(fill))
+    if (failed(fill)) {
+      LLVM_DEBUG({
+        llvm::dbgs() << "Unsupported type for constant creation: " << src.getType() << "\n";
+      });
       op->emitError("Unsupported atomic operation.");
+      return failure();
+    }
+
 
     auto maskedValue = rewriter.create<arith::SelectOp>(loc, mask, src, *fill);
     auto newAtomicOp = rewriter.create<mlir::triton::AtomicRMWOp>(

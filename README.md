@@ -100,7 +100,7 @@ The OSs supported by Triton-Ascend are the same as those supported by CANN. Down
 
 - [Architecture Design and Core Features](./docs/en/architecture_design_and_core_features.md)
 
-- [Operator Development Guide](./docs/en/programming_guide.md)
+- [Operator Development Guide](./docs/en/programming_guide/index.md)
 
 - [Operator Migration Guide](./docs/en/migration_guide/migrate_from_gpu.md)
 
@@ -108,7 +108,7 @@ The OSs supported by Triton-Ascend are the same as those supported by CANN. Down
 
 - [Performance Optimization Guide](./docs/en/debug_guide/profiling.md#)
 
-- [Environment Variables](docs/en/environment_variable_reference.md)
+- [Environment Variables and Compiler Options](docs/en/environment_variable_and_compiler_options_reference.md)
 
 ## FAQ
 

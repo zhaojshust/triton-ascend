@@ -100,7 +100,7 @@ Triton-Ascend 所支持的操作系统与 CANN 一致。请参考 CANN 官方文
 
 - [架构设计与核心特性](./docs/zh/architecture_design_and_core_features.md)
 
-- [算子开发指南](./docs/zh/programming_guide.md)
+- [算子开发指南](./docs/zh/programming_guide/index.md)
 
 - [算子迁移指南](./docs/zh/migration_guide/migrate_from_gpu.md)
 
@@ -108,7 +108,7 @@ Triton-Ascend 所支持的操作系统与 CANN 一致。请参考 CANN 官方文
 
 - [性能调优指南](./docs/zh/debug_guide/profiling.md#)
 
-- [环境变量](docs/zh/environment_variable_reference.md)
+- [环境变量和编译选项](docs/zh/environment_variable_and_compiler_options_reference.md)
 
 ## 常见问题
 

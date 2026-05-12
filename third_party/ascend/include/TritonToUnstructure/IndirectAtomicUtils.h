@@ -30,8 +30,9 @@ namespace IndirectAtomicUtils {
 using namespace mlir;
 using namespace triton;
 
-// The fast path requires a statically shaped result tensor and an offset value
-// that is either a statically shaped tensor or a scalar int/index.
+// The fast path requires a statically shaped result tensor whose element type
+// is not int8, and an offset value that is either a statically shaped tensor
+// or a scalar int/index.
 bool canUseIndirectAtomicFastPath(Value resultValue, Value offsetValue);
 
 // Lowers tt.atomic_rmw to the indirect atomic custom op and restores the

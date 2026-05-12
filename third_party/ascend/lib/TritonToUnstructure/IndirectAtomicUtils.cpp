@@ -169,6 +169,10 @@ bool canUseIndirectAtomicFastPath(Value resultValue, Value offsetValue) {
   auto resultTensorType = dyn_cast<RankedTensorType>(resultValue.getType());
   if (!hasStaticShape(resultTensorType))
     return false;
+  if (auto intType = dyn_cast<IntegerType>(resultTensorType.getElementType())) {
+    if (intType.getWidth() == 8)
+      return false;
+  }
   if (auto offsetTensorType = dyn_cast<RankedTensorType>(offsetValue.getType()))
     return offsetTensorType.hasStaticShape();
   return offsetValue.getType().isIntOrIndex();

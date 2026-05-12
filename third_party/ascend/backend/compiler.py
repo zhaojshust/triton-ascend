@@ -1004,6 +1004,17 @@ def ttir_to_npubin(mod, metadata, opt):
                         f"--append-bisheng-options={bisheng_options}"
                     ]
 
+            # Enable SIMT auto-blockify if user opted in, or if the env var is
+            # set and the user didn't explicitly opt out (matches the SIMD path
+            # at line ~541).
+            enable_auto_blockify = opt.enable_auto_blockify
+            if _is_auto_map_parallel_blocks_enabled():
+                if enable_auto_blockify is None or enable_auto_blockify:
+                    _compile_option_list += ["--enable-auto-blockify-loop"]
+            else:
+                if enable_auto_blockify:
+                    _compile_option_list += ["--enable-auto-blockify-loop"]
+
         npu_compiler_path, env = _get_npucompiler_path()
         cmd_list = (
             [npu_compiler_path, src_path]

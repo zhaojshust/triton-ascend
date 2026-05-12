@@ -24,6 +24,7 @@
 #include "ascend/include/DynamicCVPipeline/SplitDataflow/DataDependencyAnalysis.h"
 #include "ascend/include/DynamicCVPipeline/Common/FlagIdManager.h"
 
+#include "Utils/Utils.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
@@ -40,7 +41,6 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 
-#include "Utils/Utils.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include <memory>
@@ -59,46 +59,62 @@ static constexpr const char *kBlockIdAttr = "ssbuffer.block_id";
 static constexpr const char *kCoreTypeAttr = "ssbuffer.core_type";
 static constexpr const char *kTransferIdAttr = "ssbuffer.transfer_id";
 
-static uint64_t getElemBytesForAlign(Type t) {
-  if (auto ft = dyn_cast<FloatType>(t))
-    return (uint64_t)((ft.getWidth() + 7) / 8);
-  if (auto it = dyn_cast<IntegerType>(t))
-    return (uint64_t)((it.getWidth() + 7) / 8);
-  if (isa<IndexType>(t))
+static constexpr int kIntegerBitWidth = 32;
+static constexpr int NdShapeLength = 2;
+static constexpr int Nd2NzTransposeShapeLength = 3;
+static constexpr int NzShapeLength = 4;
+static constexpr int NzDimWidth = 16;
+
+static uint64_t getElemBytesForAlign(Type t)
+{
+  static constexpr uint64_t kBitsPerByte = 8;
+  if (auto ft = dyn_cast<FloatType>(t)) {
+    return (uint64_t)((ft.getWidth() + kBitsPerByte - 1) / kBitsPerByte); 
+  }
+  if (auto it = dyn_cast<IntegerType>(t)) {
+    return (uint64_t)((it.getWidth() + kBitsPerByte - 1) / kBitsPerByte);
+  }
+  if (isa<IndexType>(t)) {
     return 8ULL;
-  if (auto ct = dyn_cast<ComplexType>(t))
+  }
+  if (auto ct = dyn_cast<ComplexType>(t)) {
     return 2ULL * getElemBytesForAlign(ct.getElementType());
+  }
   return 0ULL;
 }
 
-static uint64_t getBlockElemsFor32BAlign(Type elemType) {
+static uint64_t getBlockElemsFor32BAlign(Type elemType)
+{
   constexpr uint64_t kAlignBytes = 32;
   uint64_t elemBytes = getElemBytesForAlign(elemType);
-  if (elemBytes <= 0)
+  if (elemBytes <= 0) {
     return -1;
-  if (elemBytes >= kAlignBytes)
+  } else if (kAlignBytes % elemBytes != 0) {
+    return -1;
+  } else if (elemBytes >= kAlignBytes) {
     return 1;
-  if (kAlignBytes % elemBytes != 0)
-    return -1;
+  }
   return kAlignBytes / elemBytes;
 }
 
-static void attachCommonTags(Operation *op, int blockId, StringRef coreType) {
+static void attachCommonTags(Operation *op, int blockId, StringRef coreType)
+{
   MLIRContext* ctx = op->getContext();
-  op->setAttr(kBlockIdAttr, IntegerAttr::get(IntegerType::get(ctx, 32), blockId));
+  op->setAttr(kBlockIdAttr, IntegerAttr::get(IntegerType::get(ctx, kIntegerBitWidth), blockId));
   op->setAttr(kCoreTypeAttr, StringAttr::get(ctx, coreType));
 }
 
-static void attachTransferTags(Operation *op, int blockId, StringRef coreType, int transferId) {
+static void attachTransferTags(Operation *op, int blockId, StringRef coreType, int transferId)
+{
   MLIRContext* ctx = op->getContext();
-  op->setAttr(kBlockIdAttr, IntegerAttr::get(IntegerType::get(ctx, 32), blockId));
+  op->setAttr(kBlockIdAttr, IntegerAttr::get(IntegerType::get(ctx, kIntegerBitWidth), blockId));
   op->setAttr(kCoreTypeAttr, StringAttr::get(ctx, coreType));
-  op->setAttr(kTransferIdAttr, IntegerAttr::get(IntegerType::get(ctx, 32), transferId));
+  op->setAttr(kTransferIdAttr, IntegerAttr::get(IntegerType::get(ctx, kIntegerBitWidth), transferId));
 }
 
 // Block Start/End Operation Retrieval
-std::pair<mlir::Operation*, mlir::Operation*>
-InterCoreTransferAndSyncPass::getBlockStartEnd(int targetId, mlir::ModuleOp module) {
+std::pair<mlir::Operation*, mlir::Operation*> InterCoreTransferAndSyncPass::getBlockStartEnd(int targetId, mlir::ModuleOp module)
+{
   mlir::Operation* knownOpInBlock = nullptr;
   module.walk([&](mlir::Operation* op) {
     if (knownOpInBlock) {
@@ -146,7 +162,8 @@ bool InterCoreTransferAndSyncPass::isOuterLayerDependency(
     size_t depIndex,
     mlir::Operation* currProdEnd,
     mlir::Operation* currConsStart,
-    llvm::SmallVector<DependencyInfo>& memDependencies) {
+    llvm::SmallVector<DependencyInfo>& memDependencies)
+{
   if (!currProdEnd || !currConsStart) {
     return false;
   }
@@ -191,10 +208,10 @@ bool InterCoreTransferAndSyncPass::isOuterLayerDependency(
 }
 
 // Nd2NzNormalizer
-SmallVector<int64_t, 2>
-InterCoreTransferAndSyncPass::computeExpectedShape(Value value) {
+SmallVector<int64_t, 2> InterCoreTransferAndSyncPass::computeExpectedShape(Value value)
+{
   auto tensorTy = dyn_cast<TensorType>(value.getType());
-  assert(tensorTy && tensorTy.getRank() == 2 && "source shape is not 2-dim!");
+  assert(tensorTy && tensorTy.getRank() == NdShapeLength && "source shape is not 2-dim!");
 
   int64_t M = tensorTy.getDimSize(0);
   int64_t N = tensorTy.getDimSize(1);
@@ -203,8 +220,8 @@ InterCoreTransferAndSyncPass::computeExpectedShape(Value value) {
   int64_t nWidth = getBlockElemsFor32BAlign(tensorTy.getElementType());
 
   // Calculate newM / newN using the formula
-  int64_t blM = (M + 15) / 16;
-  int64_t newM = blM * 16;
+  int64_t blM = (M + NzDimWidth-1) / NzDimWidth;
+  int64_t newM = blM * NzDimWidth;
 
   int64_t blN = (N + nWidth - 1) / nWidth;
   int64_t newN = blN * nWidth;
@@ -212,16 +229,17 @@ InterCoreTransferAndSyncPass::computeExpectedShape(Value value) {
   return {newM, newN}; // Return 2D shape
 }
 
-bool InterCoreTransferAndSyncPass::isShapeExpected(Value value, SmallVector<int64_t, 2>& expectedShape) {
+bool InterCoreTransferAndSyncPass::isShapeExpected(Value value, SmallVector<int64_t, NdShapeLength>& expectedShape)
+{
   auto tensorTy = dyn_cast<TensorType>(value.getType());
   ArrayRef<int64_t> currShape = tensorTy.getShape();
   return currShape.equals(expectedShape);
 }
 
 void InterCoreTransferAndSyncPass::rewriteMatmulWithNewShape(
-    OpBuilder &builder,
-    Operation* matmulOp,
-    Location loc) {
+  OpBuilder &builder,
+  Operation* matmulOp,
+  Location loc) {
   int matmulOpBlockId = getSsbufferBlockId(matmulOp);
 
   Value lhs = matmulOp->getOperands()[0];
@@ -234,7 +252,7 @@ void InterCoreTransferAndSyncPass::rewriteMatmulWithNewShape(
   auto resType = dyn_cast<RankedTensorType>(originalResult.getType());
   ArrayRef<int64_t> accshape = accType.getShape();
   ArrayRef<int64_t> resshape = resType.getShape();
-  SmallVector<int64_t, 2> expectedShape = {lhsType.getShape()[0], rhsType.getShape()[1]};
+  SmallVector<int64_t, NdShapeLength> expectedShape = {lhsType.getShape()[0], rhsType.getShape()[1]};
   auto expectedType = RankedTensorType::get(expectedShape, resType.getElementType());
 
   builder.setInsertionPoint(matmulOp);
@@ -282,15 +300,16 @@ void InterCoreTransferAndSyncPass::rewriteMatmulWithNewShape(
 }
 
 void InterCoreTransferAndSyncPass::rewriteTransposeWithNewShape(
-    OpBuilder &builder,
-    Operation* transposeOp,
-    Location loc) {
+  OpBuilder &builder,
+  Operation* transposeOp,
+  Location loc)
+{
   Value inputvalue = transposeOp->getOperands()[0];
   Value outputvalue = transposeOp->getOperands()[0];
 
   auto inputTy = dyn_cast<RankedTensorType>(inputvalue.getType());
   Type elemType = inputTy.getElementType();
-  SmallVector<int64_t, 2> newOutputShape = {inputTy.getShape()[1], inputTy.getShape()[0]};
+  SmallVector<int64_t, NdShapeLength> newOutputShape = {inputTy.getShape()[1], inputTy.getShape()[0]};
   auto expectedType = RankedTensorType::get(newOutputShape, elemType);
   // Create new empty tensor with new shape
   auto tensorEmptyOp = builder.create<tensor::EmptyOp>(
@@ -302,8 +321,10 @@ void InterCoreTransferAndSyncPass::rewriteTransposeWithNewShape(
 }
 
 // padding v->c tensor
-mlir::Value InterCoreTransferAndSyncPass::normalizeIfNeeded(OpBuilder &builder, DependencyInfo& dep, Location loc,
-                                               mlir::Value origValue, SmallVector<int64_t, 2> expectedShape, int originBlockId) {
+mlir::Value InterCoreTransferAndSyncPass::normalizeIfNeeded(
+  OpBuilder &builder, DependencyInfo& dep, Location loc,
+  mlir::Value origValue, SmallVector<int64_t, NdShapeLength> expectedShape, int originBlockId)
+{
   auto origTensorType = dyn_cast<RankedTensorType>(origValue.getType());
 
   int64_t iniM = origTensorType.getDimSize(0);
@@ -319,9 +340,9 @@ mlir::Value InterCoreTransferAndSyncPass::normalizeIfNeeded(OpBuilder &builder, 
       loc, expectedShape, elemType);
   auto linalgFillOp = builder.create<linalg::FillOp>(
       loc, zeroConstOp.getResult(), tensorEmptyOp.getResult());
-  SmallVector<OpFoldResult> offsets = {builder.getIndexAttr(0),builder.getIndexAttr(0)};
-  SmallVector<OpFoldResult> insertsizes = {builder.getIndexAttr(iniM),builder.getIndexAttr(iniN)};
-  SmallVector<OpFoldResult> strides = {builder.getIndexAttr(1),builder.getIndexAttr(1)};
+  SmallVector<OpFoldResult> offsets = {builder.getIndexAttr(0), builder.getIndexAttr(0)};
+  SmallVector<OpFoldResult> insertsizes = {builder.getIndexAttr(iniM), builder.getIndexAttr(iniN)};
+  SmallVector<OpFoldResult> strides = {builder.getIndexAttr(1), builder.getIndexAttr(1)};
   auto tensorInsertSliceOp = builder.create<tensor::InsertSliceOp>(
       loc,
       origValue,
@@ -365,7 +386,8 @@ mlir::Value InterCoreTransferAndSyncPass::normalizeIfNeeded(OpBuilder &builder, 
   return tensorInsertSliceOp.getResult();
 }
 
-void InterCoreTransferAndSyncPass::Nd2NzNormalize(OpBuilder &builder, DependencyInfo& dep, Location loc) {
+void InterCoreTransferAndSyncPass::Nd2NzNormalize(OpBuilder &builder, DependencyInfo& dep, Location loc)
+{
   Value origValue = dep.value;
   Value newValue = origValue;
   // Step 0: Check if this Value has already been processed
@@ -374,7 +396,7 @@ void InterCoreTransferAndSyncPass::Nd2NzNormalize(OpBuilder &builder, Dependency
     return;
   }
   // Step 1: Compute expected shape
-  SmallVector<int64_t, 2> expectedShape = computeExpectedShape(origValue);
+  SmallVector<int64_t, NdShapeLength> expectedShape = computeExpectedShape(origValue);
   int originBlockId = getSsbufferBlockId(origValue.getDefiningOp());
   // Step 2: If shapes match, return original value
   if (!isShapeExpected(origValue, expectedShape)) {
@@ -388,9 +410,9 @@ void InterCoreTransferAndSyncPass::Nd2NzNormalize(OpBuilder &builder, Dependency
 
   int64_t blk = getBlockElemsFor32BAlign(elemType);
 
-  SmallVector<int64_t, 3> shape3D = {M, N / blk, blk};
-  SmallVector<int64_t, 3> shapeTrans = {N / blk, M, blk};
-  SmallVector<int64_t, 4> shapeFinal = {N/blk, M/16, 16, blk};
+  SmallVector<int64_t, Nd2NzTransposeShapeLength> shape3D = {M, N / blk, blk};
+  SmallVector<int64_t, Nd2NzTransposeShapeLength> shapeTrans = {N / blk, M, blk};
+  SmallVector<int64_t, NzShapeLength> shapeFinal = {N/blk, M/NzDimWidth, NzDimWidth, blk};
 
   auto type3D    = RankedTensorType::get(shape3D, elemType);
   auto typeTrans = RankedTensorType::get(shapeTrans, elemType);
@@ -399,10 +421,10 @@ void InterCoreTransferAndSyncPass::Nd2NzNormalize(OpBuilder &builder, Dependency
   auto reshape3Dcst = builder.create<arith::ConstantOp>(
       loc, builder.getI64TensorAttr(shape3D));
   auto reshape3DOp = builder.create<tensor::ReshapeOp>(
-      loc, type3D, newValue, reshape3Dcst );
+      loc, type3D, newValue, reshape3Dcst);
 
   auto emptyTrans = builder.create<tensor::EmptyOp>(loc, shapeTrans, elemType);
-  SmallVector<int64_t, 4> transposeOrder = {1, 0, 2};
+  SmallVector<int64_t, Nd2NzTransposeShapeLength> transposeOrder = {1, 0, 2};
   auto transposeOp = builder.create<linalg::TransposeOp>(
       loc,
       reshape3DOp.getResult(),
@@ -427,7 +449,8 @@ void InterCoreTransferAndSyncPass::Nd2NzNormalize(OpBuilder &builder, Dependency
 }
 
 // mark memref.alloc
-mlir::Operation* InterCoreTransferAndSyncPass::annotateTightlyCoupledBuffer(OpBuilder &builder, Operation* allocOp, Location loc) {
+mlir::Operation* InterCoreTransferAndSyncPass::annotateTightlyCoupledBuffer(OpBuilder &builder, Operation* allocOp, Location loc)
+{
   builder.setInsertionPointAfter(allocOp);
   auto markAllocOp = builder.create<annotation::MarkOp>(
       loc, allocOp->getResult(0));
@@ -442,7 +465,8 @@ mlir::Operation* InterCoreTransferAndSyncPass::annotateTightlyCoupledBuffer(OpBu
 }
 
 // find the insert point for memref.alloc
-Operation* InterCoreTransferAndSyncPass::findMainLoopforTransfer(Operation* endOp, Operation* startOp) {
+Operation* InterCoreTransferAndSyncPass::findMainLoopforTransfer(Operation* endOp, Operation* startOp)
+{
   Operation* lca = endOp->getParentOp();
   assert(lca == startOp->getParentOp() &&
          "startOp and endOp are not in the same parent block, which is unexpected.");
@@ -457,15 +481,15 @@ Operation* InterCoreTransferAndSyncPass::findMainLoopforTransfer(Operation* endO
 }
 
 std::pair<Operation*, Operation*> InterCoreTransferAndSyncPass::createTransferAllocs(
-    OpBuilder& builder, Location loc,
-    ArrayRef<int64_t> shape, Type elemType, hivm::AddressSpace addrSpace,
-    Operation* prodEndOp, Operation* consStartOp,
-    int prodBlockId, int consBlockId,
-    StringRef prodTag, StringRef consTag,
-    int transferIndex) {
-
+  OpBuilder& builder, Location loc,
+  ArrayRef<int64_t> shape, Type elemType, hivm::AddressSpace addrSpace,
+  Operation* prodEndOp, Operation* consStartOp,
+  int prodBlockId, int consBlockId,
+  StringRef prodTag, StringRef consTag,
+  int transferIndex)
+{
   auto addressSpaceAttr = builder.getAttr<hivm::AddressSpaceAttr>(addrSpace);
-  auto allocType = MemRefType::get(shape, elemType, /*layout=*/nullptr, addressSpaceAttr);
+  auto allocType = MemRefType::get(shape, elemType, nullptr, addressSpaceAttr);
 
   Operation* prodAllocOp = nullptr;
   Operation* consAllocOp = nullptr;
@@ -505,7 +529,11 @@ std::pair<Operation*, Operation*> InterCoreTransferAndSyncPass::createTransferAl
   return {prodAllocOp, consAllocOp};
 }
 
-Operation* InterCoreTransferAndSyncPass::insertVectorToCubeTransfer(OpBuilder &builder, Value srcValue, Value normalizedValue, Operation* vectorEndOp, Operation* cubeStartOp, Location loc, int transferIndex, int iniConsumerId) {
+Operation* InterCoreTransferAndSyncPass::insertVectorToCubeTransfer(
+  OpBuilder &builder, Value srcValue, Value normalizedValue, 
+  Operation* vectorEndOp, Operation* cubeStartOp, 
+  Location loc, int transferIndex, int iniConsumerId)
+{
   LOG_DEBUG("Inserting [Vector->Cube] transfer for value: " << srcValue << "\n");
   // Step 1: Get input information (2D tensor: MxN)
   auto srcTensorType = cast<RankedTensorType>(srcValue.getType());
@@ -537,15 +565,15 @@ Operation* InterCoreTransferAndSyncPass::insertVectorToCubeTransfer(OpBuilder &b
   auto newAllocType = MemRefType::get(
       srcTensorType.getShape(),
       elemType,
-      /*layout=*/nullptr,
+      nullptr,
       cbufaddressSpaceAttr
   );
   auto convertLayoutOp = builder.create<hivm::ConvertLayoutOp>(
       loc,
       newAllocType,
       cubeAllocOp->getResult(0),
-      /*srcLayout=*/nzLayout,  // srcLayout
-      /*dstLayout=*/ndLayout   // dstLayout
+      nzLayout,  // srcLayout
+      ndLayout   // dstLayout
   );
   auto plainMemrefType = MemRefType::get(srcTensorType.getShape(), elemType);
   auto memspaceCastOp = builder.create<memref::MemorySpaceCastOp>(
@@ -557,8 +585,8 @@ Operation* InterCoreTransferAndSyncPass::insertVectorToCubeTransfer(OpBuilder &b
       loc,
       srcTensorType,
       memspaceCastOp.getResult(),
-      /*restrict=*/true,
-      /*writable=*/true
+      true,
+      true
   );
 
   attachTransferTags(convertLayoutOp, cubeBlockId, "CUBE", transferIndex);
@@ -575,7 +603,11 @@ Operation* InterCoreTransferAndSyncPass::insertVectorToCubeTransfer(OpBuilder &b
   return copyOp;
 }
 
-Operation* InterCoreTransferAndSyncPass::insertCubeToVectorTransfer(OpBuilder &builder, Value srcValue, Operation* cubeEndOp, Operation* vectorStartOp, Location loc, int transferIndex, int iniConsumerId) {
+Operation* InterCoreTransferAndSyncPass::insertCubeToVectorTransfer(
+  OpBuilder &builder, Value srcValue, 
+  Operation* cubeEndOp, Operation* vectorStartOp, 
+  Location loc, int transferIndex, int iniConsumerId)
+{
   LOG_DEBUG("Inserting [Cube->Vector] transfer for value: " << srcValue << "\n");
   auto srcTensorType = cast<RankedTensorType>(srcValue.getType());
   int64_t M = srcTensorType.getDimSize(0);
@@ -592,16 +624,16 @@ Operation* InterCoreTransferAndSyncPass::insertCubeToVectorTransfer(OpBuilder &b
   FixpipeDMAModeAttr dmaModeAttr = FixpipeDMAModeAttr::get(builder.getContext(), FixpipeDMAMode::NZ2ND);
   auto fixpipeOp = builder.create<hivm::FixpipeOp>(
       loc,
-      mlir::TypeRange{}, // No return value
-      srcValue,         // src
-      cubeAllocOp->getResult(0),           // dst
-      /*unit_flag_cond=*/mlir::ValueRange{},
-      /*dma_mode=*/dmaModeAttr,
-      /*dual_dst_mode=*/nullptr,
-      /*pre_quant=*/nullptr,
-      /*pre_relu=*/nullptr,
-      /*channel_split=*/nullptr,
-      /*unit_flag_mode=*/mlir::ArrayAttr{});
+      mlir::TypeRange{},        // No return value
+      srcValue,                 // src
+      cubeAllocOp->getResult(0),// dst
+      mlir::ValueRange{},
+      dmaModeAttr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      mlir::ArrayAttr{});
   attachTransferTags(fixpipeOp, cubeBlockId, "CUBE", transferIndex);
   LOG_DEBUG("[fixpipeOp]: " << *fixpipeOp << "\n");
 
@@ -616,8 +648,8 @@ Operation* InterCoreTransferAndSyncPass::insertCubeToVectorTransfer(OpBuilder &b
       loc,
       srcTensorType,
       memspaceCastOp.getResult(),
-      /*restrict=*/true,
-      /*writable=*/true);
+      true,
+      true);
 
   attachTransferTags(memspaceCastOp, vecBlockId, "VECTOR", transferIndex);
   attachTransferTags(toTensorOp, vecBlockId, "VECTOR", transferIndex);
@@ -632,7 +664,11 @@ Operation* InterCoreTransferAndSyncPass::insertCubeToVectorTransfer(OpBuilder &b
   return fixpipeOp;
 }
 
-void InterCoreTransferAndSyncPass::insertInterCoreSync(OpBuilder &builder, Operation* transferOp, Operation* consumerStartOp, Operation* consumerEndOp, int flag, Location loc, int transferIndex) {
+void InterCoreTransferAndSyncPass::insertInterCoreSync(
+  OpBuilder &builder, Operation* transferOp, 
+  Operation* consumerStartOp, Operation* consumerEndOp, 
+  int flag, Location loc, int transferIndex)
+{
   LOG_DEBUG("Inserting inter-core synchronization for transferOp: " << *transferOp << "\n");
   auto cubeCoreAttr = hivm::TCoreTypeAttr::get(builder.getContext(), hivm::TCoreType::CUBE);
   auto vecCoreAttr = hivm::TCoreTypeAttr::get(builder.getContext(), hivm::TCoreType::VECTOR);
@@ -704,12 +740,14 @@ void InterCoreTransferAndSyncPass::insertInterCoreSync(OpBuilder &builder, Opera
   }
 }
 
-void InterCoreTransferAndSyncPass::insertPipeSSync(OpBuilder &builder,
-                                        Operation* producerOp,
-                                        Operation* consumerOp,
-                                        int flag,
-                                        Location loc,
-                                        bool isCubeToVector) {
+void InterCoreTransferAndSyncPass::insertPipeSSync(
+  OpBuilder &builder,
+  Operation* producerOp,
+  Operation* consumerOp,
+  int flag,
+  Location loc,
+  bool isCubeToVector)
+{
   LOG_DEBUG("Inserting PIPE_S sync: "
                << (isCubeToVector ? "CUBE->VECTOR" : "VECTOR->CUBE")
                << ", flag = " << flag << "\n");
@@ -754,8 +792,8 @@ LogicalResult InterCoreTransferAndSyncPass::handleVectorToCube(
     DependencyInfo& dep,
     llvm::DenseMap<mlir::Value, mlir::Value> vecvalueMapping,
     llvm::DenseMap<mlir::Value, mlir::Value> cubeValueMapping,
-    FlagIdManager& flagManager) {
-
+    FlagIdManager& flagManager)
+{
   mlir::Value srcValue = dep.value;
   auto it = cubeValueMapping.find(srcValue);
   if (it != cubeValueMapping.end()) {
@@ -788,7 +826,8 @@ LogicalResult InterCoreTransferAndSyncPass::handleCubeToVector(
     OpBuilder &builder,
     DependencyInfo& dep,
     llvm::DenseMap<mlir::Value, mlir::Value> cubeValueMapping,
-    FlagIdManager& flagManager) {
+    FlagIdManager& flagManager)
+{
   mlir::Value srcValue = dep.value;
   auto it = cubeValueMapping.find(srcValue);
   if (it != cubeValueMapping.end()) {
@@ -821,7 +860,8 @@ LogicalResult InterCoreTransferAndSyncPass::handleMemoryDependency(
     DependencyInfo& dep,
     size_t depIndex,
     llvm::SmallVector<DependencyInfo> memDependencies,
-    FlagIdManager& flagManager) {
+    FlagIdManager& flagManager)
+{
   LOG_DEBUG("Handling PIPE_S memory dependency...\n");
 
   // Get producer and consumer block start/end operations
@@ -862,7 +902,8 @@ LogicalResult InterCoreTransferAndSyncPass::handleMemoryDependency(
 }
 
 // Main Processing
-LogicalResult InterCoreTransferAndSyncPass::processDependencies(FlagIdManager& flagManager) {
+LogicalResult InterCoreTransferAndSyncPass::processDependencies(FlagIdManager& flagManager)
+{
   LOG_DEBUG("Starting InterCoreTransferAndSyncPass processDependencies...\n");
   OpBuilder builder(module.getContext());
 
@@ -913,22 +954,6 @@ LogicalResult InterCoreTransferAndSyncPass::processDependencies(FlagIdManager& f
     }
   }
   LOG_DEBUG("Completed C->V transfers and syncs.\n");
-
-  llvm::SmallVector<DependencyInfo>& memDependencies = info.getMemoryDependencies();
-  LOG_DEBUG("[DEBUG] MemoryDependencies size: " << memDependencies.size() << "\n");
-
-  for (size_t i = 0; i < memDependencies.size(); ++i) {
-    auto& dep = memDependencies[i];
-    LOG_DEBUG("[PIPE_S] value = " << dep.value
-                 << " producerBlockId = " << dep.producerBlockId
-                 << ", consumerBlockId = " << dep.consumerBlockId << "\n");
-    if (failed(handleMemoryDependency(builder, dep, i, memDependencies, flagManager))) {
-      LOG_DEBUG("[ERROR] PIPE_S failed! producerBlockId = " << dep.producerBlockId
-                   << ", consumerBlockId = " << dep.consumerBlockId << "\n");
-      return failure();
-    }
-  }
-  LOG_DEBUG("Completed PIPE_S memory syncs.\n");
   LOG_DEBUG("=====================================================\n");
   LOG_DEBUG("InterCoreTransferAndSyncPass success!\n");
 
@@ -937,7 +962,8 @@ LogicalResult InterCoreTransferAndSyncPass::processDependencies(FlagIdManager& f
 
 
 // Declare dependent dialects
-void InterCoreTransferAndSyncPass::getDependentDialects(DialectRegistry &registry) const {
+void InterCoreTransferAndSyncPass::getDependentDialects(DialectRegistry &registry) const
+{
   registry.insert<
     func::FuncDialect,
     arith::ArithDialect,

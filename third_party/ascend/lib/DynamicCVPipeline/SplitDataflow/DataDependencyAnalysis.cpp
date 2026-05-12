@@ -44,6 +44,7 @@ static constexpr const char *DEBUG_TYPE = "data-dependency-analysis";
 #define LOG_DEBUG(...) LLVM_DEBUG(llvm::dbgs() << " [" << DEBUG_TYPE << "] " << __VA_ARGS__)
 
 using namespace mlir::triton;
+using namespace mlir::CVPipeline;
 
 // Attribute name constants
 static constexpr const char *kBlockIdAttr = "ssbuffer.block_id";
@@ -51,7 +52,8 @@ static constexpr const char *kCoreTypeAttr = "ssbuffer.core_type";
 static constexpr const char *kTransferIdAttr = "ssbuffer.transfer_id";
 
 // Helper: ssbuffer.core_type
-llvm::StringRef getSsbufferCoreType(Operation* op) {
+llvm::StringRef getSsbufferCoreType(Operation* op) 
+{
   if (auto attr = op->getAttrOfType<mlir::StringAttr>(kCoreTypeAttr)) {
     return attr.getValue();
   }
@@ -59,12 +61,13 @@ llvm::StringRef getSsbufferCoreType(Operation* op) {
 }
 
 // Helper: Get CoreType from op and index
-llvm::StringRef getCoreTypeWithIndex(Operation* op, int index) {
+llvm::StringRef getCoreTypeWithIndex(Operation* op, int index) 
+{
   llvm::StringRef typeStr = getSsbufferCoreType(op);
 
   if (typeStr.contains(", ")) {
     llvm::SmallVector<llvm::StringRef> types;
-    typeStr.split(types, ", ", /*MaxSplit=*/ -1, /*KeepEmpty=*/ false);
+    typeStr.split(types, ", ", -1, false);
     if (index < types.size()) {
       return types[index].trim();
     }
@@ -76,15 +79,18 @@ llvm::StringRef getCoreTypeWithIndex(Operation* op, int index) {
 }
 
 // Helper: Check if operation is control flow
-bool DataDependencyAnalysisPass::isControlFlowOp(mlir::Operation *op) {//TOCHECK
+bool DataDependencyAnalysisPass::isControlFlowOp(mlir::Operation *op) 
+{
   if (!op) return false;
   return isa<scf::ForOp>(op) || isa<scf::IfOp>(op) 
          || isa<scf::WhileOp>(op) || isa<scf::YieldOp>(op);
 }
 
 // Helper: Build and record BlockInfo
-void DataDependencyAnalysisPass::collectBlockInfo(DataDependencyInfo& info, int blockId, 
-                                                  llvm::SmallVector<mlir::Operation*>& ops) {
+void DataDependencyAnalysisPass::collectBlockInfo(
+        DataDependencyInfo& info, int blockId, 
+        llvm::SmallVector<mlir::Operation*>& ops) 
+{
   if (ops.empty()) {
     LOG_DEBUG("Warning: Block ID " << blockId << " has no operations.\n");
     return;
@@ -138,13 +144,14 @@ void DataDependencyAnalysisPass::collectBlockInfo(DataDependencyInfo& info, int 
 }
 
 // Block Information Collection
-void DataDependencyAnalysisPass::createBlockInfoMap(DataDependencyInfo& info) {
+void DataDependencyAnalysisPass::createBlockInfoMap(DataDependencyInfo& info) 
+{
   int currentId = -2;
   llvm::SmallVector<mlir::Operation*> currentOps;
 
   module.walk([&](mlir::Operation* op) {
     int opBlockId = getSsbufferBlockId(op);
-    if (opBlockId != -1){
+    if (opBlockId != -1) {
       // When the id changes, the block ends && Exclude the initial state
       if (opBlockId != currentId && currentId != -2) {
         collectBlockInfo(info, currentId, currentOps);
@@ -160,12 +167,14 @@ void DataDependencyAnalysisPass::createBlockInfoMap(DataDependencyInfo& info) {
   }
 }
 
-void DataDependencyAnalysisPass::collectDepInfo(mlir::Value depvalue, 
-                                                DependencyType dependencyType, 
-                                                llvm::SmallVector<DependencyInfo>& dependencies,
-                                                int iniProdId,
-                                                int iniConsId,
-                                                DataDependencyInfo& info) {
+void DataDependencyAnalysisPass::collectDepInfo(
+        mlir::Value depvalue, 
+        DependencyType dependencyType, 
+        llvm::SmallVector<DependencyInfo>& dependencies,
+        int iniProdId,
+        int iniConsId,
+        DataDependencyInfo& info)
+{
   DependencyInfo depInfo;
   depInfo.type = dependencyType;
   depInfo.value = depvalue;
@@ -182,7 +191,8 @@ void DataDependencyAnalysisPass::collectDepInfo(mlir::Value depvalue,
 }
 
 // Analyze V->C
-void DataDependencyAnalysisPass::analyzeExternalInputs(DataDependencyInfo& info) {
+void DataDependencyAnalysisPass::analyzeExternalInputs(DataDependencyInfo& info)
+{
   auto& blockInfoMap = info.getBlockInfoMap();
   auto& v2cDependencies = info.getV2CDependencies();
 
@@ -239,7 +249,8 @@ void DataDependencyAnalysisPass::analyzeExternalInputs(DataDependencyInfo& info)
 }
 
 // Analyze C->V
-void DataDependencyAnalysisPass::analyzeExternalOutputs(DataDependencyInfo& info) {
+void DataDependencyAnalysisPass::analyzeExternalOutputs(DataDependencyInfo& info)
+{
   auto& blockInfoMap = info.getBlockInfoMap();
   auto& c2vDependencies = info.getC2VDependencies();
 
@@ -303,7 +314,8 @@ void DataDependencyAnalysisPass::analyzeExternalOutputs(DataDependencyInfo& info
   LOG_DEBUG("External output analysis complete.\n");
 }
 
-void DataDependencyAnalysisPass::analyzeMemoryEffect(DataDependencyInfo& info) {
+void DataDependencyAnalysisPass::analyzeMemoryEffect(DataDependencyInfo& info)
+{
   auto& memoryDependencies = info.getMemoryDependencies();
   LOG_DEBUG("\n=== start mem dep analysis ===\n");
 
@@ -354,7 +366,8 @@ void DataDependencyAnalysisPass::analyzeMemoryEffect(DataDependencyInfo& info) {
 
 // Producer/Consumer Hierarchy Analysis
 std::pair<int, int> DataDependencyAnalysisPass::findCommonLevelBlockIds(
-    DataDependencyInfo& info, int producerBlockId, int consumerBlockId) {
+    DataDependencyInfo& info, int producerBlockId, int consumerBlockId)
+{
   auto& blockInfoMap = info.getBlockInfoMap();
 
   LOG_DEBUG("start findCommonLevelBlockIds...\n");
@@ -465,7 +478,8 @@ std::unique_ptr<OperationPass<ModuleOp>> createDataDependencyAnalysisPass()
 }
 
 // Helper: Get BlockId
-int getSsbufferBlockId(Operation* op) {
+int getSsbufferBlockId(Operation* op) 
+{
   if (auto attr = op->getAttrOfType<IntegerAttr>(kBlockIdAttr)) {
     return attr.getInt();
   }

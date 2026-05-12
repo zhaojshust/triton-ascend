@@ -68,7 +68,8 @@ public:
   bool isValid() const { return valid; }
 
   // for MLIR Analysis framework
-  bool isInvalidated(const mlir::AnalysisManager::PreservedAnalyses &pa) {
+  bool isInvalidated(const mlir::AnalysisManager::PreservedAnalyses &pa) 
+  {
     return false;
   }
 
@@ -107,7 +108,8 @@ private:
   void createBlockInfoMap(DataDependencyInfo& info);
   void collectBlockInfo(DataDependencyInfo& info, int blockId, llvm::SmallVector<mlir::Operation*>& ops);
 
-  void collectDepInfo(mlir::Value depvalue, DependencyType dependencyType, 
+  void collectDepInfo(mlir::Value depvalue, 
+                      DependencyType dependencyType, 
                       llvm::SmallVector<DependencyInfo>& dependencies,
                       int iniProdId, int iniConsId,
                       DataDependencyInfo& info);

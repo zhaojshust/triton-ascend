@@ -23,8 +23,8 @@
 #ifndef TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
 #define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
 
-#include "mlir/IR/BuiltinOps.h"
 #include <optional>
+#include "mlir/IR/BuiltinOps.h"
 
 namespace mlir {
 namespace triton {

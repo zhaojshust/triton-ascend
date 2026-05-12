@@ -50,6 +50,8 @@ import triton.language as tl
 SUPPORTED_DTYPES = [
     ("int32", torch.int32),
     ("int64", torch.int64),
+    ("uint32", torch.uint32),
+    ("uint64", torch.uint64),
 ]
 
 RANK_SHAPES = {
@@ -404,14 +406,17 @@ def _build_value_tensor(shape, dtype):
 
 
 def _build_output_baseline(output_numel, dtype):
+    if dtype in (torch.uint32, torch.uint64):
+        return torch.arange(output_numel, dtype=torch.int64).to(dtype)
     return torch.arange(output_numel, dtype=dtype)
 
 
 def _simulate_atomic_and(base_output, offsets, values, mask=None):
-    expected_output = base_output.reshape(-1).clone().cpu()
+    compute_dtype = torch.int64 if base_output.dtype in (torch.uint32, torch.uint64) else base_output.dtype
+    expected_output = base_output.reshape(-1).clone().cpu().to(compute_dtype)
     flat_offsets = offsets.reshape(-1).to(torch.int64).cpu()
-    flat_values = values.reshape(-1).cpu()
-    flat_old = torch.zeros(flat_values.shape, dtype=base_output.dtype)
+    flat_values = values.reshape(-1).cpu().to(compute_dtype)
+    flat_old = torch.zeros(flat_values.shape, dtype=compute_dtype)
     if mask is None:
         flat_mask = torch.ones(flat_offsets.shape, dtype=torch.bool)
     else:
@@ -422,9 +427,9 @@ def _simulate_atomic_and(base_output, offsets, values, mask=None):
             continue
         offset = int(flat_offsets[idx].item())
         flat_old[idx] = expected_output[offset]
-        expected_output[offset] = expected_output[offset] & flat_values[idx].to(expected_output.dtype)
+        expected_output[offset] = expected_output[offset] & flat_values[idx]
 
-    return expected_output, flat_old.reshape(values.shape)
+    return expected_output.to(base_output.dtype), flat_old.reshape(values.shape).to(base_output.dtype)
 
 
 def _assert_equal(actual, expected, dtype_name, rank, scenario):

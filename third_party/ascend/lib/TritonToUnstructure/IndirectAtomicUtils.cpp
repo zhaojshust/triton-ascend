@@ -73,6 +73,16 @@ FailureOr<Value> createZeroTensor(Location loc, RankedTensorType tensorType,
   return createSplatConstantTensor(loc, tensorType, *zeroAttr, rewriter);
 }
 
+Value castMaskToI8(Location loc, Value maskValue, PatternRewriter &rewriter) {
+  Type maskType = maskValue.getType();
+  if (auto tensorType = dyn_cast<RankedTensorType>(maskType)) {
+    auto targetType =
+        RankedTensorType::get(tensorType.getShape(), rewriter.getI8Type());
+    return rewriter.create<arith::ExtUIOp>(loc, targetType, maskValue);
+  }
+  return rewriter.create<arith::ExtUIOp>(loc, rewriter.getI8Type(), maskValue);
+}
+
 // Materializes inputValue as a 1D tensor with flatTensorType.
 // If inputValue is scalar-like, it is first splatted to expandedTensorShape and
 // then reshaped into the flattened 1D tensor type.
@@ -207,10 +217,11 @@ FailureOr<Value> tryConvertAtomicRmwToIndirectCustom(
 
   SmallVector<Value> inputs{srcPtr, *flatOffsetValue, *flatUpdateValue};
   if (Value maskValue = op.getMask()) {
+    Value maskValueI8 = castMaskToI8(op.getLoc(), maskValue, rewriter);
     auto flatMaskTensorType =
-        RankedTensorType::get({flatNumel}, rewriter.getI1Type());
+        RankedTensorType::get({flatNumel}, rewriter.getI8Type());
     auto flatMaskValue = createFlattenedTensorValue(
-        op.getLoc(), maskValue, resultTensorShape, flatMaskTensorType,
+        op.getLoc(), maskValueI8, resultTensorShape, flatMaskTensorType,
         rewriter);
     if (failed(flatMaskValue))
       return failure();

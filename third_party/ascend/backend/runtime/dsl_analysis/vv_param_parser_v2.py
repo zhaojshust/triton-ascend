@@ -824,9 +824,18 @@ def _collect_mask_extent_candidates_for_symbol(
     symbol: str,
     func_node: ast.AST,
     assignment_expr_map: Mapping[str, Sequence[ast.AST]],
+    load_derived_symbols: Optional[Set[str]] = None,
 ) -> List[Tuple[str, str, float]]:
     candidates: List[Tuple[str, str, float]] = []
     seen = set()
+    load_derived_symbols = load_derived_symbols or set()
+
+    def _contains_symbol_direct(expr: ast.AST, target: str) -> bool:
+        for child in ast.walk(expr):
+            if isinstance(child, ast.Name) and child.id == target:
+                return True
+        return False
+
     for node in ast.walk(func_node):
         if not isinstance(node, ast.Compare):
             continue
@@ -846,6 +855,16 @@ def _collect_mask_extent_candidates_for_symbol(
         if not hit:
             continue
 
+        # Reject value-domain comparisons (e.g. logits < 0) whose left side is
+        # already load-derived. Such predicates should not be treated as axis
+        # extent masks.
+        if _expr_uses_symbols(node.left, load_derived_symbols):
+            continue
+
+        # Prefer direct offset-mask patterns (symbol appears directly on left).
+        # Indirect dataflow hits are still kept but with lower confidence.
+        is_direct_hit = _contains_symbol_direct(node.left, symbol)
+
         rhs_expr = _normalize_mask_extent_candidate_expr(
             node.comparators[0],
             symbol=symbol,
@@ -854,7 +873,9 @@ def _collect_mask_extent_candidates_for_symbol(
         if rhs_expr in seen:
             continue
         seen.add(rhs_expr)
-        candidates.append((rhs_expr, "mask", 1.0))
+        source = "mask_direct" if is_direct_hit else "mask_indirect"
+        confidence = 1.0 if is_direct_hit else 0.6
+        candidates.append((rhs_expr, source, confidence))
     return candidates
 
 
@@ -934,6 +955,15 @@ def _extract_param_names(func_node: ast.AST) -> Set[str]:
 
 def _extract_name_ids(expr: ast.AST) -> Set[str]:
     return {node.id for node in ast.walk(expr) if isinstance(node, ast.Name)}
+
+
+def _expr_uses_symbols(expr: ast.AST, symbols: Set[str]) -> bool:
+    if not symbols:
+        return False
+    for node in ast.walk(expr):
+        if isinstance(node, ast.Name) and node.id in symbols:
+            return True
+    return False
 
 
 def _extract_name_depths_transitive(
@@ -1471,14 +1501,16 @@ def _select_best_fixed_tiling_expr(
 
 
 def _extent_priority(source: str) -> int:
-    if source == "mask":
+    if source == "mask_direct":
         return 1
-    if source == "infer_total":
+    if source == "mask_indirect":
         return 2
-    if source == "loop":
+    if source == "infer_total":
         return 3
-    if source == "make_block_ptr":
+    if source == "loop":
         return 4
+    if source == "make_block_ptr":
+        return 5
     return 5
 
 
@@ -1930,6 +1962,7 @@ def parse_vv_axis_semantic_v2(
                 symbol,
                 func_node,
                 assignment_expr_map,
+                load_derived_symbols,
             ):
                 _append_extent(current_site, axis_index, expr, source, confidence)
 

@@ -20,47 +20,45 @@
  * THE SOFTWARE.
  */
 
-#ifndef TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_ADD_CONTROLFLOW_CONDITION_PASS_H
-#define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_ADD_CONTROLFLOW_CONDITION_PASS_H
-
-#include "llvm/ADT/SmallVector.h"
-#include "mlir/Dialect/Linalg/TransformOps/DialectExtension.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#ifndef TRITON_ASCEND_SSBUF_UPDATE_FOR_OPS_FOR_CONTROL_FLOW_H
+#define TRITON_ASCEND_SSBUF_UPDATE_FOR_OPS_FOR_CONTROL_FLOW_H
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
-#include "llvm/ADT/SmallPtrSet.h"
+
+#include "ascend/include/DynamicCVPipeline/AddControlFlowCondition.h"
 
 namespace mlir {
 namespace triton {
 
-struct ControlFlowConditionInfo {
-  llvm::DenseMap<scf::ForOp, SmallVector<int>> blockCounters;
-  llvm::DenseMap<scf::ForOp, int> blockCounterNums;
-  llvm::DenseMap<scf::ForOp, SmallVector<int>> innerDepConds;
-
-  llvm::DenseMap<Value, SmallVector<Value>> crossCoreDependentMap;
-  llvm::DenseMap<scf::ForOp, llvm::DenseMap<Value, SmallVector<Value>>> intraCoreDependentMap;
-
-  llvm::DenseMap<scf::IfOp, Value> cntArgs;
-};
-
-class AddControlFlowConditionPass
-    : public PassWrapper<AddControlFlowConditionPass, OperationPass<ModuleOp>> {
+class UpdateForOpsPass
+    : public PassWrapper<UpdateForOpsPass, OperationPass<ModuleOp>> {
 public:
-  AddControlFlowConditionPass() = default;
+  UpdateForOpsPass() = default;
 
   void runOnOperation() override;
 
-  void getDependentDialects(DialectRegistry &registry) const override
+  void setConditionInfo(ControlFlowConditionInfo *info)
   {
-    registry.insert<LLVM::LLVMDialect>();
+    this->info = info;
   }
 
-  llvm::StringRef getArgument() const override { return "add-control-flow-condition"; }
+  llvm::StringRef getArgument() const override
+  {
+    return "update-for-ops";
+  }
+
+private:
+  LogicalResult addBlockCountersAndInnerDepConds(ModuleOp module, ControlFlowConditionInfo *info);
+
+  LogicalResult deriveBlockCountersFromIfOps(ModuleOp module, ControlFlowConditionInfo *info);
+
+  LogicalResult insertInterCorePipeS(ModuleOp module);
+
+  ControlFlowConditionInfo *info = nullptr;
 };
 
-std::unique_ptr<OperationPass<ModuleOp>> createAddControlFlowConditionPass();
+std::unique_ptr<OperationPass<ModuleOp>> createUpdateForOpsPass();
+
 } // namespace triton
 } // namespace mlir
-#endif // TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_ADD_CONTROLFLOW_CONDITION_PASS_H
+#endif // TRITON_ASCEND_SSBUF_UPDATE_FOR_OPS_FOR_CONTROL_FLOW_H

@@ -24,15 +24,12 @@
 #define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_PASSES_H
 
 #include "AddDynamicCVPipeline.h"
-#include "ascend/include/DynamicCVPipeline/Passes.h.inc"
-#include "ascend/include/DynamicCVPipeline/SplitDataflow/AddBlockIdForControlOps.h"
-#include "ascend/include/DynamicCVPipeline/SplitDataflow/DataDependencyAnalysis.h"
-#include "ascend/include/DynamicCVPipeline/SplitDataflow/InterCoreTransferAndSync.h"
-#include "ascend/include/DynamicCVPipeline/SplitDataflow/MarkMainLoop.h"
+
 namespace mlir {
 namespace triton {
 
 #define GEN_PASS_REGISTRATION
+#include "ascend/include/DynamicCVPipeline/Passes.h.inc"
 
 } // namespace triton
 } // namespace mlir

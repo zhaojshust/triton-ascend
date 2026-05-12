@@ -100,16 +100,7 @@ public:
   DataDependencyAnalysisPass() = default;
 
   // Run the pass
-  void runOnOperation() override;
-
-  // Return the pass argument name
-  static constexpr ::llvm::StringRef getArgumentName() { return "data-dependency-analysis"; }
-  ::llvm::StringRef getArgument() const override { return "data-dependency-analysis"; }
-  ::llvm::StringRef getDescription() const override
-  {
-      return "Analyze data dependencies between Vector and Cube blocks";
-  }
-  ::llvm::StringRef getName() const override { return "DataDependencyAnalysisPass"; }
+  void runOnOperation();
 
 private:
 
@@ -132,8 +123,6 @@ private:
 };
 
 std::unique_ptr<OperationPass<ModuleOp>> createDataDependencyAnalysisPass();
-
-void registerDataDependencyAnalysisPasses();
 
 // Helper: Get BlockId
 int getSsbufferBlockId(Operation* op);

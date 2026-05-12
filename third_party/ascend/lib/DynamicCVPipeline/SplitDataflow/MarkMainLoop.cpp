@@ -94,10 +94,5 @@ std::unique_ptr<OperationPass<ModuleOp>> createMarkMainLoopPass()
     return std::make_unique<MarkMainLoopPass>();
 }
 
-void registerMarkMainLoopPasses()
-{
-  registerPass([]() -> std::unique_ptr<mlir::Pass> { return createMarkMainLoopPass(); });
-}
-
 } // namespace triton
 } // namespace mlir

@@ -93,7 +93,6 @@ void DataDependencyAnalysisPass::collectBlockInfo(DataDependencyInfo& info, int 
   BlockInfo blockInfo;
   blockInfo.blockId = blockId;
   blockInfo.isCube = false;
-  blockInfo.isControl = false;
 
   // In cases with one or more core_types
   // as long as there is a cube, it is necessary to check the dataflow.
@@ -102,6 +101,7 @@ void DataDependencyAnalysisPass::collectBlockInfo(DataDependencyInfo& info, int 
     blockInfo.isCube = true;
   }
 
+  blockInfo.isControl = false;
   if (isControlFlowOp(ops[0])) {
     blockInfo.isControl = true;
   }
@@ -110,7 +110,6 @@ void DataDependencyAnalysisPass::collectBlockInfo(DataDependencyInfo& info, int 
 
   for (auto *op : ops) {
     blockInfo.Operations.push_back(op);
-    // Collect inputs
     for (auto operand : op->getOperands()) {
       mlir::Operation *defOp = operand.getDefiningOp();
       // If defOp is not null and defOp is not in current ops set, it's an external input
@@ -118,7 +117,6 @@ void DataDependencyAnalysisPass::collectBlockInfo(DataDependencyInfo& info, int 
         blockInfo.inputs.push_back(operand);
       }
     }
-    //Collect outputs
     for (auto result : op->getResults()) {
       // If any user is not in the current ops set, it's an external output
       bool hasExternalUser = false;
@@ -464,11 +462,6 @@ namespace triton {
 std::unique_ptr<OperationPass<ModuleOp>> createDataDependencyAnalysisPass()
 {
     return std::make_unique<DataDependencyAnalysisPass>();
-}
-
-void registerDataDependencyAnalysisPasses()
-{
-  registerPass([]() -> std::unique_ptr<mlir::Pass> { return createDataDependencyAnalysisPass(); });
 }
 
 // Helper: Get BlockId

@@ -981,10 +981,5 @@ std::unique_ptr<OperationPass<ModuleOp>> createInterCoreTransferAndSyncPass()
     return std::make_unique<InterCoreTransferAndSyncPass>();
 }
 
-void registerInterCoreTransferAndSyncPasses()
-{
-  registerPass([]() -> std::unique_ptr<mlir::Pass> { return createInterCoreTransferAndSyncPass(); });
-}
-
 } // namespace triton
 } // namespace mlir

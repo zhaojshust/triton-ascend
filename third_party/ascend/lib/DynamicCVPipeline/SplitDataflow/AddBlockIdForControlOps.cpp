@@ -78,10 +78,5 @@ std::unique_ptr<OperationPass<ModuleOp>> createAddBlockIdForControlOpsPass()
     return std::make_unique<AddBlockIdForControlOpsPass>();
 }
 
-void registerAddBlockIdForControlOpsPasses()
-{
-  registerPass([]() -> std::unique_ptr<mlir::Pass> { return createAddBlockIdForControlOpsPass(); });
-}
-
 } // namespace triton
 } // namespace mlir

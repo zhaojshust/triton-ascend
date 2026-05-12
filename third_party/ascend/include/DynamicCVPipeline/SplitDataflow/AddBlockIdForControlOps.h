@@ -41,21 +41,10 @@ public:
   // Run the pass
   void runOnOperation() override;
 
-  // Return the pass argument name
-  static constexpr ::llvm::StringRef getArgumentName() { return "add-block-id-for-control-ops"; }
-  ::llvm::StringRef getArgument() const override { return "add-block-id-for-control-ops"; }
-  ::llvm::StringRef getDescription() const override
-  {
-      return "Add block_id attribute to control flow operations";
-  }
-  ::llvm::StringRef getName() const override { return "AddBlockIdForControlOpsPass"; }
-  
 private:
 };
 
 std::unique_ptr<OperationPass<ModuleOp>> createAddBlockIdForControlOpsPass();
-
-void registerAddBlockIdForControlOpsPasses();
 
 } // namespace triton
 } // namespace mlir

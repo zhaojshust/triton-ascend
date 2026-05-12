@@ -24,15 +24,16 @@
 #include "mlir/Pass/PassManager.h"
 #include "llvm/Support/Debug.h"
 #include "ascend/include/DynamicCVPipeline/SeparateMemoryFromCompute/AddMultiBufferToGMLoadPass.h"
+#include "ascend/include/DynamicCVPipeline/SeparateMemoryFromCompute/AsyncLoadHoistingPass.h"
 
-static constexpr const char *DEBUG_TYPE = "SeparateMemoryFromCompute";
+static constexpr const char *DEBUG_TYPE = "separate-memory-from-compute";
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << (X) << "\n")
 
 using namespace mlir;
 using namespace triton;
 
-static constexpr int kDefaultBufferDepth = 1;
+static constexpr int kDefaultBufferDepth = 2;
 
 void SeparateMemoryFromComputePass::runOnOperation()
 {
@@ -49,6 +50,7 @@ void SeparateMemoryFromComputePass::runOnOperation()
   LDBG("Enter SeparateMemoryFromCompute pass");
 
   // Step 1: Hoist memory operations out of compute blocks
+  pm.addPass(createAsyncLoadHoistingPass());
 
   // Step 2: Apply multi-buffering to memory operations
   pm.addPass(createAddMultiBufferToGMLoadPass());

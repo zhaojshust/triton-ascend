@@ -53,7 +53,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957c">} {
 
 
 // CHECK-LABEL: func.func @dot_scale_fp8_kernel
-// CHECK: hfusion.matmul_mx ins
+// CHECK: hfusion.matmul_mx
 // CHECK-DAG: tensor<32x128xf8E5M2>
 // CHECK-DAG: tensor<128x32xf8E4M3FN>
 // CHECK-DAG: tensor<32x4xi8>

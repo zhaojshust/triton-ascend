@@ -981,7 +981,7 @@ ARCHITECTURE_ALIASES = {
 }
 
 ARCHITECTURE_DEPENDENCIES = {
-    "x86_64": ["triton==3.2.0"],
+    "x86_64": ["triton==3.5.0"],
     "arm": ["triton==3.5.0"],
 }
 

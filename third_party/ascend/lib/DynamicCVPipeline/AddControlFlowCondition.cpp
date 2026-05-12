@@ -34,30 +34,35 @@ using namespace triton;
 
 void AddControlFlowConditionPass::runOnOperation()
 {
-    ModuleOp module = getOperation();
-    LDBG("Enter add controlflow condition pass.");
-    OpPassManager pm(module.getOperationName());
-    ControlFlowConditionInfo info;
+  ModuleOp module = getOperation();
+  LDBG("Enter add controlflow condition pass.");
+  OpPassManager pm(module.getOperationName());
+  ControlFlowConditionInfo info;
 
-    // Step1:Fill in the intraCoreDependentMap and crossCoreDependentMap
+  // Step1:Fill in the intraCoreDependentMap and crossCoreDependentMap
 
-    // Step2:Create an ifOp wrapper block based on the block_id
+  // Step2:Create an ifOp wrapper block based on the block_id
 
-    // Step3:Fill in blockCounters innerDepConds and insertInterCorePipeS
+  // Step3:Fill in blockCounters innerDepConds and insertInterCorePipeS
 
-    // Step4:Update the conditions of ifOp based on the intraCoreDependentMap and crossCoreDependentMap
-    auto updatePass = std::make_unique<UpdateConditionInfoPass>();
-    updatePass->setConditionInfo(&info);
-    pm.addPass(std::move(updatePass));
-    // Step5:Update the iteration count of forOp
-    LDBG("Exit add controlflow condition pass.");
+  // Step4:Update the conditions of ifOp based on the intraCoreDependentMap and crossCoreDependentMap
+  auto updatePass = std::make_unique<UpdateConditionInfoPass>();
+  updatePass->setConditionInfo(&info);
+  pm.addPass(std::move(updatePass));
+
+  // Step5:Update the iteration count of forOp
+  if (failed(runPipeline(pm, module))) {
+    module->emitError() << "[" << DEBUG_TYPE << "] Pass failed!";
+    signalPassFailure();
+  }
+  LDBG("Exit add controlflow condition pass.");
 }
 
 namespace mlir {
 namespace triton {
-std::unique_ptr<OperationPass<ModuleOp>> createAddControlFlowConditionPass()
+std::unique_ptr<OperationPass<ModuleOp> > createAddControlFlowConditionPass()
 {
-    return std::make_unique<AddControlFlowConditionPass>();
+  return std::make_unique<AddControlFlowConditionPass>();
 }
 } // namespace triton
 } // namespace mlir

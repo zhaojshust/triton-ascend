@@ -71,7 +71,7 @@ pip install torch==2.7.1+cpu --index-url https://download.pytorch.org/whl/cpu
 您可以通过pip安装Triton-Ascend的最新稳定版本。
 
 ```shell
-pip install triton-ascend
+pip install triton-ascend==3.2.1 --extra-index-url=https://triton-ascend.osinfra.cn/pypi/simple
 ```
 
 - 注意：triton-ascend 3.2.0 及以下 Triton-Ascend和Triton 不能同时存在。需要先卸载社区 Triton，再安装 Triton-Ascend。<br>
@@ -82,22 +82,14 @@ x86 与 arm 使用不同版本的社区 Triton 安装包的原因是社区从 3.
 ```shell
 pip uninstall triton
 pip uninstall triton-ascend
-pip install triton-ascend
+pip install triton-ascend==3.2.1 --extra-index-url=https://triton-ascend.osinfra.cn/pypi/simple
 ```
 
-### nightly build版本
-
-我们为用户提供了每日更新的nightly包，用户可通过以下命令进行安装。
+### 历史稳定版本
 
 ```shell
-pip install -i https://test.pypi.org/simple/ "triton-ascend<3.2.0rc" --pre --no-cache-dir
+pip install triton-ascend==3.2.0
 ```
-
-同时用户也能在 [历史列表](https://test.pypi.org/project/triton-ascend/#history) 中找到所有的nightly build包。
-
-注意，如果您在执行`pip install`时遇到ssl相关报错，可追加`--trusted-host test.pypi.org --trusted-host test-files.pythonhosted.org`选项解决。
-
-<a id="code-base"></a>
 
 ## 通过源码安装Triton-Ascend
 
@@ -111,7 +103,6 @@ pip install -i https://test.pypi.org/simple/ "triton-ascend<3.2.0rc" --pre --no-
 
 | Pytorch版本 | 推荐的GCC版本 | 推荐的GLIBC版本 |
 |-------------------|----------------------|--------------------|
-| PyTorch2.6.0      | (aarch64)11.2.1<br>(x86) 9.3.1 | (aarch64)>=2.28<br>(x86)>=2.17 |
 | PyTorch2.7.1      | 11.2.1               | 2.28               |
 | PyTorch2.8.0      | 13.3.1               | 2.28               |
 | PyTorch2.9.1      | 13.3.1               | 2.28               |

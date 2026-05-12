@@ -24,6 +24,7 @@
 #include "ascend/include/DynamicCVPipeline/AddControlFlowCondition/CloneOps.h"
 #include "ascend/include/DynamicCVPipeline/AddControlFlowCondition/CreateIfOps.h"
 #include "ascend/include/DynamicCVPipeline/AddControlFlowCondition/UpdateConditionInfo.h"
+#include "third_party/ascend/include/DynamicCVPipeline/AddControlFlowCondition/InitDependentMap.h"
 #include "ascend/include/DynamicCVPipeline/AddControlFlowCondition/UpdateForOps.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -102,6 +103,11 @@ void AddControlFlowConditionPass::runOnOperation()
   PassManager pm(&getContext(), module.getOperationName());
   ControlFlowConditionInfo info;
 
+  // Step0: Initialize crossCoreDependentMap and intraCoreDependentMap
+  std::unique_ptr<InitDependentMapPass> initDependentMapPass(new InitDependentMapPass());
+  initDependentMapPass->setConditionInfo(&info);
+  pm.addPass(std::move(initDependentMapPass));
+
   // Step1: Clone ops in vector/cube to ensure that each block_id has its own
   // ops without sharing
   pm.addPass(createCloneOpsPass());
@@ -116,7 +122,7 @@ void AddControlFlowConditionPass::runOnOperation()
   std::unique_ptr<UpdateForOpsPass> updateForOpsPass(new UpdateForOpsPass());
   updateForOpsPass->setConditionInfo(&info);
   pm.addPass(std::move(updateForOpsPass));
-  
+
   // Step4:Update the conditions of ifOp based on the intraCoreDependentMap and crossCoreDependentMap
   auto updatePass = std::make_unique<UpdateConditionInfoPass>();
   updatePass->setConditionInfo(&info);

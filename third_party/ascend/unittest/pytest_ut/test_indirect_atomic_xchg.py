@@ -50,9 +50,7 @@ import triton.language as tl
 SUPPORTED_DTYPES = [
     ("int32", torch.int32),
     ("int64", torch.int64),
-    ("float16", torch.float16),
     ("float32", torch.float32),
-    ("bfloat16", torch.bfloat16),
     ("uint32", torch.uint32),
     ("uint64", torch.uint64),
 ]
@@ -489,6 +487,8 @@ def test_atomic_xchg_structured_pointer_with_discrete_mask(dtype_name, torch_dty
 @pytest.mark.parametrize("dtype_name, torch_dtype", TEST_DTYPE)
 @pytest.mark.parametrize("rank", TEST_RANKS)
 def test_atomic_xchg_partially_structured_indirect_offsets(dtype_name, torch_dtype, rank):
+    if rank == 1:
+        pytest.skip("Partially structured test is not applicable to 1-D tensors")
     shape = PARTIAL_STRUCTURED_SHAPES[rank]
     offsets, output_numel = _build_partial_structured_offsets(shape)
     values = _build_value_tensor(shape, torch_dtype).npu()

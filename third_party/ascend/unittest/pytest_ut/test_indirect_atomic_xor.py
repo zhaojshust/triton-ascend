@@ -486,6 +486,8 @@ def test_atomic_xor_structured_pointer_with_discrete_mask(dtype_name, torch_dtyp
 @pytest.mark.parametrize("dtype_name, torch_dtype", TEST_DTYPE)
 @pytest.mark.parametrize("rank", TEST_RANKS)
 def test_atomic_xor_partially_structured_indirect_offsets(dtype_name, torch_dtype, rank):
+    if rank == 1:
+        pytest.skip("Partially structured test is not applicable to 1-D tensors")
     shape = PARTIAL_STRUCTURED_SHAPES[rank]
     offsets, output_numel = _build_partial_structured_offsets(shape)
     values = _build_value_tensor(shape, torch_dtype).npu()

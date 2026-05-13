@@ -185,8 +185,7 @@ LogicalResult tryRewriteIndirectFastPath(MemAccOpTy op, Location loc,
     return success();
   } else if constexpr (std::is_same_v<MemAccOpTy, triton::AtomicRMWOp>) {
     assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
-    if (!IndirectAtomicUtils::canUseIndirectAtomicFastPath(op.getResult(),
-                                                           ptrOffset)) {
+    if (!IndirectAtomicUtils::canUseIndirectAtomicFastPath(op, ptrOffset)) {
       return failure();
     }
 
@@ -203,8 +202,7 @@ LogicalResult tryRewriteIndirectFastPath(MemAccOpTy op, Location loc,
     return success();
   } else if constexpr (std::is_same_v<MemAccOpTy, triton::AtomicCASOp>) {
     assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
-    if (!IndirectAtomicUtils::canUseIndirectAtomicFastPath(op.getResult(),
-                                                           ptrOffset)) {
+    if (!IndirectAtomicUtils::canUseIndirectAtomicFastPath(op, ptrOffset)) {
       return failure();
     }
 

@@ -41,6 +41,16 @@ bool hasStaticShape(RankedTensorType tensorType) {
   return tensorType && tensorType.hasStaticShape();
 }
 
+bool hasStaticOffsetShape(Value offsetValue) {
+  if (auto offsetTensorType = dyn_cast<RankedTensorType>(offsetValue.getType()))
+    return offsetTensorType.hasStaticShape();
+  return offsetValue.getType().isIntOrIndex();
+}
+
+bool isUnsupportedCasOrXchgElementType(Type elementType) {
+  return elementType.isF16() || elementType.isBF16();
+}
+
 int64_t getNumElements(ArrayRef<int64_t> tensorShape) {
   return std::accumulate(tensorShape.begin(), tensorShape.end(), int64_t{1},
                          std::multiplies<int64_t>());
@@ -175,17 +185,33 @@ Value createIndirectAtomicCustom(Location loc,
 
 namespace IndirectAtomicUtils {
 
-bool canUseIndirectAtomicFastPath(Value resultValue, Value offsetValue) {
-  auto resultTensorType = dyn_cast<RankedTensorType>(resultValue.getType());
+bool canUseIndirectAtomicFastPath(triton::AtomicRMWOp op, Value offsetValue) {
+  auto resultTensorType = dyn_cast<RankedTensorType>(op.getResult().getType());
   if (!hasStaticShape(resultTensorType))
     return false;
-  if (auto intType = dyn_cast<IntegerType>(resultTensorType.getElementType())) {
+  Type elementType = resultTensorType.getElementType();
+  if (auto intType = dyn_cast<IntegerType>(elementType)) {
     if (intType.getWidth() == 8)
       return false;
   }
-  if (auto offsetTensorType = dyn_cast<RankedTensorType>(offsetValue.getType()))
-    return offsetTensorType.hasStaticShape();
-  return offsetValue.getType().isIntOrIndex();
+  if (op.getAtomicRmwOp() == RMWOp::XCHG &&
+      isUnsupportedCasOrXchgElementType(elementType))
+    return false;
+  return hasStaticOffsetShape(offsetValue);
+}
+
+bool canUseIndirectAtomicFastPath(triton::AtomicCASOp op, Value offsetValue) {
+  auto resultTensorType = dyn_cast<RankedTensorType>(op.getResult().getType());
+  if (!hasStaticShape(resultTensorType))
+    return false;
+  Type elementType = resultTensorType.getElementType();
+  if (auto intType = dyn_cast<IntegerType>(elementType)) {
+    if (intType.getWidth() == 8)
+      return false;
+  }
+  if (isUnsupportedCasOrXchgElementType(elementType))
+    return false;
+  return hasStaticOffsetShape(offsetValue);
 }
 
 FailureOr<Value> tryConvertAtomicRmwToIndirectCustom(

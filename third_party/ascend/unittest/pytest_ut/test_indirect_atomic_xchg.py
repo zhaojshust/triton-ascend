@@ -50,7 +50,9 @@ import triton.language as tl
 SUPPORTED_DTYPES = [
     ("int32", torch.int32),
     ("int64", torch.int64),
+    ("float16", torch.float16),
     ("float32", torch.float32),
+    ("bfloat16", torch.bfloat16),
     ("uint32", torch.uint32),
     ("uint64", torch.uint64),
 ]

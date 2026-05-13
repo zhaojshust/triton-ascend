@@ -29,6 +29,7 @@
 
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -859,7 +860,8 @@ void TritonToUnstructurePass::getDependentDialects(
   registry.insert<func::FuncDialect, arith::ArithDialect, linalg::LinalgDialect,
                   affine::AffineDialect, scf::SCFDialect, tensor::TensorDialect,
                   bufferization::BufferizationDialect, memref::MemRefDialect,
-                  triton::TritonDialect, triton::ascend::TritonAscendDialect>();
+                  triton::TritonDialect, triton::ascend::TritonAscendDialect,
+                  hivm::HIVMDialect>();
 }
 
 std::unique_ptr<OperationPass<ModuleOp>> triton::createTritonToUnstructurePass(

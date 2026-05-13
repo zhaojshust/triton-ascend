@@ -48,7 +48,9 @@ import triton.language as tl
 SUPPORTED_DTYPES = [
     ("int32", torch.int32),
     ("int64", torch.int64),
+    ("float16", torch.float16),
     ("float32", torch.float32),
+    ("bfloat16", torch.bfloat16),
     ("uint32", torch.uint32),
     ("uint64", torch.uint64),
 ]
@@ -321,12 +323,13 @@ def _build_output_baseline(output_numel, dtype):
 
 
 def _build_compare_tensor(offsets, baseline, dtype):
+    compute_dtype = torch.int64 if dtype in (torch.uint32, torch.uint64) else dtype
     flat_offsets = offsets.reshape(-1).to(torch.int64)
-    base_flat = baseline.reshape(-1)
-    compare = torch.empty(flat_offsets.numel(), dtype=dtype)
+    base_flat = baseline.reshape(-1).to(compute_dtype)
+    compare = torch.empty(flat_offsets.numel(), dtype=compute_dtype)
     for idx, offset in enumerate(flat_offsets.tolist()):
         compare[idx] = base_flat[offset] if idx % 2 == 0 else base_flat[offset] + 1
-    return compare.reshape(offsets.shape)
+    return compare.reshape(offsets.shape).to(dtype)
 
 
 def _simulate_atomic_cas(base_output, offsets, compare, values):

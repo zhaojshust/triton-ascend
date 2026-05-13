@@ -1,4 +1,4 @@
-# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+﻿# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -168,6 +168,18 @@ def ttir_to_linalg(mod, metadata, opt, *, named_ops=False):
         )
         if metadata["enable_dynamic_cv_pipeline"]:
             ascend.passes.ttir.add_dynamic_cv_pipeline(pm, compile_on_910_95)
+
+        _val = metadata.get("intra_cache_num")
+        if _val is not None:
+            ascend.passes.ttir.set_buffer_count(0, _val)
+
+        _val = metadata.get("inter_cache_num")
+        if _val is not None:
+            ascend.passes.ttir.set_buffer_count(1, _val)
+
+        _val = metadata.get("load_cache_num")
+        if _val is not None:
+            ascend.passes.ttir.set_buffer_count(2, _val)
 
         if opt.debug:
             # Print the equivalent triton-opt command line so the pass
@@ -991,6 +1003,17 @@ def ttir_to_npubin(mod, metadata, opt):
                     _compile_option_list += [
                         f"--append-bisheng-options={bisheng_options}"
                     ]
+
+            # Enable SIMT auto-blockify if user opted in, or if the env var is
+            # set and the user didn't explicitly opt out (matches the SIMD path
+            # at line ~541).
+            enable_auto_blockify = opt.enable_auto_blockify
+            if _is_auto_map_parallel_blocks_enabled():
+                if enable_auto_blockify is None or enable_auto_blockify:
+                    _compile_option_list += ["--enable-auto-blockify-loop"]
+            else:
+                if enable_auto_blockify:
+                    _compile_option_list += ["--enable-auto-blockify-loop"]
 
         npu_compiler_path, env = _get_npucompiler_path()
         cmd_list = (

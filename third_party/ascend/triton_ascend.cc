@@ -21,6 +21,7 @@
 #include "ascend/include/TritonToLLVM/Passes.h"
 
 #include "ascend/include/DynamicCVPipeline/Passes.h"
+#include "ascend/include/DynamicCVPipeline/Common/BufferCountManager.h"
 // todo: this code will be removed in version 530.
 #include "ascend/include/TritonAffinityOpt/Passes.h"
 
@@ -375,6 +376,11 @@ void init_triton_ascend_passes_ttir(py::module &&m) {
  	   
   m.def("add_dag_ssbuffer", [](mlir::PassManager &pm) {
     pm.addPass(mlir::triton::createDAGSSBufferPass());});
+
+  m.def("set_buffer_count", [](int type, int count) {
+    auto depType = static_cast<mlir::triton::BufferCountManager::DepType>(type);
+    mlir::triton::BufferCountManager::getInstance().setBufferCount(depType, count);
+  });
 }
 
 // Forward declaration for ascend_ir bindings (defined in ascend_ir.cc)

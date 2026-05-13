@@ -20,8 +20,8 @@
  * THE SOFTWARE.
  */
 
-#ifndef TRITON_ADAPTER_FLAG_ID_MANAGER_H
-#define TRITON_ADAPTER_FLAG_ID_MANAGER_H
+#ifndef TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
+#define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
 
 #include <optional>
 #include "mlir/IR/BuiltinOps.h"
@@ -51,9 +51,6 @@ private:
   // Traverse Module to find all existing flag_id to prevent duplicate allocation
   void scanExistingFlags(ModuleOp module);
 
-  // Try to reuse flag (return reusable id or INVALID_FLAG_ID)
-  int tryReuseFlag(Operation* insertionPoint);
-
   // Currently allocated maximum ID
   int64_t currentMaxId = 0;
 
@@ -64,4 +61,4 @@ private:
 } // namespace triton
 } // namespace mlir
 
-#endif // TRITON_ADAPTER_FLAG_ID_MANAGER_H
+#endif // TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H

@@ -26,19 +26,47 @@
 
 using namespace mlir;
 
-static constexpr const char *DEBUG_TYPE = "AddBlockIdForControlOps";
-#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
-#define LDBG(X) LLVM_DEBUG(DBGS() << (X) << "\n")
+static constexpr const char *DEBUG_TYPE = "add-block-id-for-control-ops";
+#define LOG_DEBUG(...) LLVM_DEBUG(llvm::dbgs() << " [" << DEBUG_TYPE << "] " << __VA_ARGS__)
 
 using namespace mlir::triton;
 
 // Pass Entry Point
 void AddBlockIdForControlOpsPass::runOnOperation()
 {
-  LDBG("\n--- enter AddBlockIdForControlOpsPass --->\n");
+  LOG_DEBUG("\n--- enter AddBlockIdForControlOpsPass --->\n");
   ModuleOp module = getOperation();
 
-  LDBG("\n--- exit AddBlockIdForControlOpsPass --->\n");
+  // Step 1: find the max block_id
+  int maxBlockId = -1;
+  module.walk([&](Operation *op) {
+    if (auto attr = op->getAttrOfType<IntegerAttr>("ssbuffer.block_id")) {
+      int currentId = attr.getInt();
+      if (currentId > maxBlockId) {
+        maxBlockId = currentId;
+      }
+    }
+  });
+
+  LOG_DEBUG("maxBlockId: " << maxBlockId << "\n");
+
+  // Step 2: add block_id for control flow ops
+  module.walk([&](Operation *op) {
+    // skip op with block_id
+    if (op->getAttrOfType<IntegerAttr>("ssbuffer.block_id")) {
+      return;
+    }
+
+    if (isa<scf::ForOp, scf::IfOp, scf::WhileOp>(op)) {
+      maxBlockId++;
+      static constexpr int kIntegerBitWidth = 32;
+      op->setAttr("ssbuffer.block_id",
+                  IntegerAttr::get(IntegerType::get(module.getContext(), kIntegerBitWidth), maxBlockId));
+      LOG_DEBUG("Added block_id " << maxBlockId << " to " << *op << "\n");
+    }
+  });
+
+  LOG_DEBUG("\n--- exit AddBlockIdForControlOpsPass --->\n");
 }
 
 // Create the pass

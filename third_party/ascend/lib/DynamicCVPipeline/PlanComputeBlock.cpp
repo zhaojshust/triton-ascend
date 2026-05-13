@@ -20,12 +20,15 @@
  * THE SOFTWARE.
  */
 
-#include "ascend/include/DynamicCVPipeline/PlanComputeBlock/OpClassifier.h"
-#include "ascend/include/DynamicCVPipeline/PlanComputeBlockPass.h"
-#include "mlir/Pass/PassManager.h"
 #include "llvm/Support/Debug.h"
-#include "ascend/include/DynamicCVPipeline/PlanComputeBlock/Passes.h"
+
+#include "mlir/Pass/PassManager.h"
+
 #include "ascend/include/DynamicCVPipeline/PlanComputeBlock/ComputeBlockIdManager.h"
+#include "ascend/include/DynamicCVPipeline/PlanComputeBlock/OpClassifier.h"
+#include "ascend/include/DynamicCVPipeline/PlanComputeBlock/Passes.h"
+#include "ascend/include/DynamicCVPipeline/PlanComputeBlock/ReorderOpsByBlockId.h"
+#include "ascend/include/DynamicCVPipeline/PlanComputeBlockPass.h"
 
 using namespace mlir;
 using namespace triton;
@@ -50,6 +53,7 @@ void PlanComputeBlockPass::runOnOperation()
     pm.addPass(createPlanVectorBlockPass());
 
     // Step 4: Reorder
+    pm.addPass(createReorderOpsByBlockIdPass());
 
     if (failed(runPipeline(pm, module))) {
         module->emitError() << "[" << DEBUG_TYPE << "] Pass failed!";
@@ -58,6 +62,7 @@ void PlanComputeBlockPass::runOnOperation()
 
     LOG_DEBUG("Process successfully\n");
 }
+
 namespace mlir {
 namespace triton {
 std::unique_ptr<OperationPass<ModuleOp>> createPlanComputeBlockPass()

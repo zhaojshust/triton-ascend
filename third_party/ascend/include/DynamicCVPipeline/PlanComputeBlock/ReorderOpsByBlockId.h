@@ -20,45 +20,24 @@
  * THE SOFTWARE.
  */
 
-#ifndef ADD_AUTO_SCHEDULING_COMMON_UTILS_H
-#define ADD_AUTO_SCHEDULING_COMMON_UTILS_H
-#include <string_view>
-#include "mlir/IR/Operation.h"
-#include "mlir/IR/Value.h"
-#include "llvm/ADT/StringRef.h"
+#ifndef TRITION_ADAPTER_DYNAMIC_CV_PIPELINE_PLAN_COMPUTE_BLOCK_REORDER_OPS_BY_BLOCKID_H
+#define TRITION_ADAPTER_DYNAMIC_CV_PIPELINE_PLAN_COMPUTE_BLOCK_REORDER_OPS_BY_BLOCKID_H
 
-namespace mlir {
-namespace CVPipeline {
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/Pass/Pass.h"
 
-inline constexpr llvm::StringLiteral kCoreType = "ssbuffer.core_type";
-inline constexpr llvm::StringLiteral kBlockId = "ssbuffer.block_id";
+namespace mlir::triton {
 
-enum CoreType {
-    UNDETERMINED = 0,
-    VECTOR_ONLY = 1 << 0,
-    CUBE_ONLY = 1 << 1,
-    CUBE_AND_VECTOR = VECTOR_ONLY | CUBE_ONLY,
+class ReorderOpsByBlockIdPass : public PassWrapper<ReorderOpsByBlockIdPass, OperationPass<ModuleOp>> {
+public:
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ReorderOpsByBlockIdPass);
+
+    ReorderOpsByBlockIdPass() = default;
+    void runOnOperation() override;
 };
 
-inline constexpr CoreType fromStrCoreType(std::string_view s)
-{
-    if (s == "VECTOR") {
-        return CoreType::VECTOR_ONLY;
-    }
-    if (s == "CUBE") {
-        return CoreType::CUBE_ONLY;
-    }
+std::unique_ptr<OperationPass<ModuleOp>> createReorderOpsByBlockIdPass();
 
-    return CoreType::UNDETERMINED;
-}
+} // namespace mlir::triton
 
-// Functions for managing core types
-CoreType getOpCoreType(Operation *op);
-
-llvm::LogicalResult verifyOpBlockId(Operation *op);
-std::optional<int64_t> getOpBlockId(Operation *op);
-
-} // namespace CVPipeline
-} // namespace mlir
-
-#endif
+#endif // TRITION_ADAPTER_DYNAMIC_CV_PIPELINE_PLAN_COMPUTE_BLOCK_REORDER_OPS_BY_BLOCKID_H

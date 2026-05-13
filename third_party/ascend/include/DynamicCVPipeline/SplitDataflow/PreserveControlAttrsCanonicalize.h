@@ -20,45 +20,52 @@
  * THE SOFTWARE.
  */
 
-#ifndef TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
-#define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
+#ifndef TRITON_ADAPTER_PRESERVE_CONTROL_ATTRS_CANONICALIZE_H
+#define TRITON_ADAPTER_PRESERVE_CONTROL_ATTRS_CANONICALIZE_H
 
-#include <optional>
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Pass/Pass.h"
 
 namespace mlir {
 namespace triton {
 
-// Flag ID Manager for synchronization between cores
-// Purpose: Globally scan and allocate unique flag_id for synchronization
-class FlagIdManager {
+class PreserveControlAttrsCanonicalizePass
+    : public PassWrapper<PreserveControlAttrsCanonicalizePass,
+                         OperationPass<ModuleOp>> {
 public:
-  // Maximum flag count (hardware limitation)
-  static constexpr int MAX_FLAG_ID = 14;
-  static constexpr int INVALID_FLAG_ID = -1;
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
+        PreserveControlAttrsCanonicalizePass)
 
-  // Constructor: initialize with Module for scanning
-  FlagIdManager(ModuleOp module);
+    PreserveControlAttrsCanonicalizePass() = default;
 
-  // Acquire an available ID: try to reuse existing flags first (conservative analysis),
-  // if cannot reuse, then increment and allocate.
-  // insertionPoint: the position where sync operation will be inserted, used for
-  // linear comparison in reuse analysis. Can be nullptr.
-  int acquireId(Operation* insertionPoint);
+    void runOnOperation() override;
 
-private:
-  // Scan existing Flag IDs
-  // Traverse Module to find all existing flag_id to prevent duplicate allocation
-  void scanExistingFlags(ModuleOp module);
+    static constexpr ::llvm::StringRef getArgumentName()
+    {
+        return "preserve-control-attrs-canonicalize";
+    }
 
-  // Currently allocated maximum ID
-  int64_t currentMaxId = 0;
+    ::llvm::StringRef getArgument() const override
+    {
+        return "preserve-control-attrs-canonicalize";
+    }
 
-  // Save module for reuse analysis
-  ModuleOp module;
+    ::llvm::StringRef getDescription() const override
+    {
+        return "Canonicalize while preserving selected control-flow attrs";
+    }
+
+    ::llvm::StringRef getName() const override
+    {
+        return "PreserveControlAttrsCanonicalizePass";
+    }
 };
+
+std::unique_ptr<OperationPass<ModuleOp>> createPreserveControlAttrsCanonicalizePass();
+
+void registerPreserveControlAttrsCanonicalizePasses();
 
 } // namespace triton
 } // namespace mlir
 
-#endif // TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
+#endif // TRITON_ADAPTER_PRESERVE_CONTROL_ATTRS_CANONICALIZE_H

@@ -20,31 +20,24 @@
  * THE SOFTWARE.
  */
 
-#ifndef TRITON_ADAPTER_MARK_MAIN_LOOP_H
-#define TRITON_ADAPTER_MARK_MAIN_LOOP_H
+#ifndef TRITION_ADAPTER_DYNAMIC_CV_PIPELINE_PLAN_COMPUTE_BLOCK_REORDER_OPS_BY_BLOCKID_H
+#define TRITION_ADAPTER_DYNAMIC_CV_PIPELINE_PLAN_COMPUTE_BLOCK_REORDER_OPS_BY_BLOCKID_H
 
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
-namespace mlir {
-namespace triton {
-// Define pass
-// Pass for marking the main computation loop in the module
-class MarkMainLoopPass : public PassWrapper<MarkMainLoopPass, OperationPass<ModuleOp>> {
+namespace mlir::triton {
+
+class ReorderOpsByBlockIdPass : public PassWrapper<ReorderOpsByBlockIdPass, OperationPass<ModuleOp>> {
 public:
-    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(MarkMainLoopPass)
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ReorderOpsByBlockIdPass);
 
-    MarkMainLoopPass() = default;
-
-    // Run the pass
+    ReorderOpsByBlockIdPass() = default;
     void runOnOperation() override;
-
-private:
 };
 
-std::unique_ptr<OperationPass<ModuleOp>> createMarkMainLoopPass();
-} // namespace triton
-} // namespace mlir
+std::unique_ptr<OperationPass<ModuleOp>> createReorderOpsByBlockIdPass();
 
-#endif // TRITON_ADAPTER_MARK_MAIN_LOOP_H
+} // namespace mlir::triton
+
+#endif // TRITION_ADAPTER_DYNAMIC_CV_PIPELINE_PLAN_COMPUTE_BLOCK_REORDER_OPS_BY_BLOCKID_H

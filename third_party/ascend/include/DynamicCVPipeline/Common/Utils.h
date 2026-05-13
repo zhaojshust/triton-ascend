@@ -31,6 +31,7 @@ namespace mlir {
 namespace CVPipeline {
 
 inline constexpr llvm::StringLiteral kCoreType = "ssbuffer.core_type";
+inline constexpr llvm::StringLiteral kBlockId = "ssbuffer.block_id";
 
 enum CoreType {
     UNDETERMINED = 0,
@@ -53,6 +54,10 @@ inline constexpr CoreType fromStrCoreType(std::string_view s)
 
 // Functions for managing core types
 CoreType getOpCoreType(Operation *op);
+
+llvm::LogicalResult verifyOpBlockId(Operation *op);
+std::optional<int64_t> getOpBlockId(Operation *op);
+
 } // namespace CVPipeline
 } // namespace mlir
 

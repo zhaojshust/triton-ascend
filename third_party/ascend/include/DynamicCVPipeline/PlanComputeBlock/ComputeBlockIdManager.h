@@ -33,8 +33,6 @@
 namespace mlir {
 namespace CVPipeline {
 
-inline constexpr llvm::StringLiteral kBlockId = "ssbuffer.block_id";
-
 /**
     * the class is to promise CUBEID and VECTORID are unified.
  */

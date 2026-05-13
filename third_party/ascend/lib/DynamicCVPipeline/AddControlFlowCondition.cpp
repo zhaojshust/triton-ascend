@@ -25,6 +25,7 @@
 #include "ascend/include/DynamicCVPipeline/AddControlFlowCondition/CreateIfOps.h"
 #include "ascend/include/DynamicCVPipeline/AddControlFlowCondition/UpdateConditionInfo.h"
 #include "ascend/include/DynamicCVPipeline/AddControlFlowCondition/UpdateForOps.h"
+#include "ascend/include/DynamicCVPipeline/AddControlFlowCondition/UpdateLoopIterTimes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Pass/PassManager.h"
@@ -116,13 +117,17 @@ void AddControlFlowConditionPass::runOnOperation()
   std::unique_ptr<UpdateForOpsPass> updateForOpsPass(new UpdateForOpsPass());
   updateForOpsPass->setConditionInfo(&info);
   pm.addPass(std::move(updateForOpsPass));
-  
+
   // Step4:Update the conditions of ifOp based on the intraCoreDependentMap and crossCoreDependentMap
   auto updatePass = std::make_unique<UpdateConditionInfoPass>();
   updatePass->setConditionInfo(&info);
   pm.addPass(std::move(updatePass));
 
-  // Step5:Update the iteration count of forOp
+  // Step5: Update for loop iteration times based on intraCoreDependentMap
+  std::unique_ptr<UpdateLoopIterTimesPass> updateLoopIterTimesPass(new UpdateLoopIterTimesPass());
+  updateLoopIterTimesPass->setConditionInfo(&info);
+  pm.addPass(std::move(updateLoopIterTimesPass));
+
   if (failed(runPipeline(pm, module))) {
     module->emitError() << "[" << DEBUG_TYPE << "] Pass failed!";
     signalPassFailure();

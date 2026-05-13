@@ -20,45 +20,30 @@
  * THE SOFTWARE.
  */
 
-#ifndef TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
-#define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
+#ifndef TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_SEPARATE_CV_SCOPE_H
+#define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_SEPARATE_CV_SCOPE_H
 
-#include <optional>
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Pass/Pass.h"
 
 namespace mlir {
 namespace triton {
 
-// Flag ID Manager for synchronization between cores
-// Purpose: Globally scan and allocate unique flag_id for synchronization
-class FlagIdManager {
+class SeparateCVScopePass
+    : public PassWrapper<SeparateCVScopePass, OperationPass<ModuleOp>> {
 public:
-  // Maximum flag count (hardware limitation)
-  static constexpr int MAX_FLAG_ID = 14;
-  static constexpr int INVALID_FLAG_ID = -1;
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SeparateCVScopePass)
 
-  // Constructor: initialize with Module for scanning
-  FlagIdManager(ModuleOp module);
+    SeparateCVScopePass() = default;
 
-  // Acquire an available ID: try to reuse existing flags first (conservative analysis),
-  // if cannot reuse, then increment and allocate.
-  // insertionPoint: the position where sync operation will be inserted, used for
-  // linear comparison in reuse analysis. Can be nullptr.
-  int acquireId(Operation* insertionPoint);
+    void getDependentDialects(DialectRegistry &registry) const override;
 
-private:
-  // Scan existing Flag IDs
-  // Traverse Module to find all existing flag_id to prevent duplicate allocation
-  void scanExistingFlags(ModuleOp module);
-
-  // Currently allocated maximum ID
-  int64_t currentMaxId = 0;
-
-  // Save module for reuse analysis
-  ModuleOp module;
+    void runOnOperation() override;
 };
+
+std::unique_ptr<OperationPass<ModuleOp>> createSeparateCVScopePass();
 
 } // namespace triton
 } // namespace mlir
 
-#endif // TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
+#endif // TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_SEPARATE_CV_SCOPE_H

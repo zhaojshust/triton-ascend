@@ -25,6 +25,8 @@
 #include "ascend/include/DynamicCVPipeline/SplitDataflow/DataDependencyAnalysis.h"
 #include "ascend/include/DynamicCVPipeline/SplitDataflow/InterCoreTransferAndSync.h"
 #include "ascend/include/DynamicCVPipeline/SplitDataflow/MarkMainLoop.h"
+#include "ascend/include/DynamicCVPipeline/SplitDataflow/PreserveControlAttrsCanonicalize.h"
+#include "ascend/include/DynamicCVPipeline/SplitDataflow/SeparateCVScope.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/Support/Debug.h"
 
@@ -55,6 +57,10 @@ void SplitDataflowPass::runOnOperation()
     pm.addPass(createMarkMainLoopPass());
 
     // Step 5: Run SeparateCVScope
+    pm.addPass(createSeparateCVScopePass());
+
+    // Step 6: Canonicalize to preserve control flow attributes
+    pm.addPass(createPreserveControlAttrsCanonicalizePass());
 
     if (failed(runPipeline(pm, module))) {
         module->emitError() << "[" << DEBUG_TYPE << "] Pass failed!";
@@ -63,8 +69,10 @@ void SplitDataflowPass::runOnOperation()
 
     LDBG("Process successfully");
 }
+
 namespace mlir {
 namespace triton {
+
 std::unique_ptr<OperationPass<ModuleOp>> createSplitDataflowPass()
 {
     return std::make_unique<SplitDataflowPass>();

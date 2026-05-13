@@ -20,45 +20,30 @@
  * THE SOFTWARE.
  */
 
-#ifndef TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
-#define TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
+#ifndef TRITON_ASCEND_SSBUF_INITDEPENDENTMAPFORCONTROLFLOW_H
+#define TRITON_ASCEND_SSBUF_INITDEPENDENTMAPFORCONTROLFLOW_H
 
-#include <optional>
+#include "third_party/ascend/include/DynamicCVPipeline/AddControlFlowCondition.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Pass/Pass.h"
 
 namespace mlir {
 namespace triton {
 
-// Flag ID Manager for synchronization between cores
-// Purpose: Globally scan and allocate unique flag_id for synchronization
-class FlagIdManager {
+class InitDependentMapPass
+    : public PassWrapper<InitDependentMapPass, OperationPass<ModuleOp>> {
 public:
-  // Maximum flag count (hardware limitation)
-  static constexpr int MAX_FLAG_ID = 14;
-  static constexpr int INVALID_FLAG_ID = -1;
-
-  // Constructor: initialize with Module for scanning
-  FlagIdManager(ModuleOp module);
-
-  // Acquire an available ID: try to reuse existing flags first (conservative analysis),
-  // if cannot reuse, then increment and allocate.
-  // insertionPoint: the position where sync operation will be inserted, used for
-  // linear comparison in reuse analysis. Can be nullptr.
-  int acquireId(Operation* insertionPoint);
+  InitDependentMapPass() = default;
+  void runOnOperation() override;
+  void setConditionInfo(ControlFlowConditionInfo *info) { this->info = info; }
 
 private:
-  // Scan existing Flag IDs
-  // Traverse Module to find all existing flag_id to prevent duplicate allocation
-  void scanExistingFlags(ModuleOp module);
-
-  // Currently allocated maximum ID
-  int64_t currentMaxId = 0;
-
-  // Save module for reuse analysis
-  ModuleOp module;
+  ControlFlowConditionInfo *info = nullptr;
 };
+
+std::unique_ptr<OperationPass<ModuleOp>> createInitDependentMapPass();
 
 } // namespace triton
 } // namespace mlir
 
-#endif // TRITON_ADAPTER_DYNAMIC_CV_PIPELINE_COMMON_FLAG_ID_MANAGER_H
+#endif // TRITON_ASCEND_SSBUF_INITDEPENDENTMAPFORCONTROLFLOW_H

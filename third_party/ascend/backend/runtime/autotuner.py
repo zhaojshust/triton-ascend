@@ -30,6 +30,7 @@ import inspect
 import os
 import pprint
 import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 import itertools
 from collections.abc import Sequence
@@ -2215,6 +2216,8 @@ class AutoTilingTuner(Autotuner):
                         try:
                             if hasattr(fut, "result"):
                                 fut = fut.result()
+                            if hasattr(fut, "packed_metadata"):
+                                kernels_call[config].target_kernel_name = fut.packed_metadata.get("kernel_name")
                             run_fns[config] = functools.partial(kernels_call[config], warmup=False)
                         except (CompileTimeAssertionFailure, MLIRCompilationError) as e:
                             import traceback
@@ -2228,7 +2231,9 @@ class AutoTilingTuner(Autotuner):
         else:
             for config, fn in kernels_call.items():
                 try:
-                    fn(warmup=False)
+                    compiled_kernel = fn(warmup=False)
+                    if hasattr(compiled_kernel, "packed_metadata"):
+                        fn.target_kernel_name = compiled_kernel.packed_metadata.get("kernel_name")
                     run_fns[config] = functools.partial(fn, warmup=False)
                 except (CompileTimeAssertionFailure, MLIRCompilationError, OutOfResources) as e:
                     import traceback
@@ -2248,16 +2253,43 @@ class AutoTilingTuner(Autotuner):
         # Respect user-provided benchmarkers even when NPU profiling mode is enabled.
         use_npu_profiling = use_profiling and not self.user_defined_do_bench
         if use_npu_profiling:
-            from ..testing import do_bench_npu
+            from ..testing import ProfilerResultMismatchError, do_bench_npu
 
             cv_mode = self.parser_mode in ("cube", "mix") and self.cv_parse_result is not None
             warmup = self.cv_warmup if cv_mode else 5
             active = self.cv_repeat if cv_mode else 30
-            time_cost = do_bench_npu(list(run_fns.values()), warmup=warmup, active=active, clear_l2_cache=False)
-            assert len(time_cost) == len(run_fns)
-            return {config: cost for config, cost in zip(run_fns.keys(), time_cost)}
+            target_kernel_name = self._resolve_target_kernel_name(kernels_call, run_fns.keys())
+            try:
+                time_cost = do_bench_npu(
+                    list(run_fns.values()),
+                    warmup=warmup,
+                    active=active,
+                    clear_l2_cache=False,
+                    target_kernel_name=target_kernel_name,
+                )
+                assert len(time_cost) == len(run_fns)
+                return {config: cost for config, cost in zip(run_fns.keys(), time_cost)}
+            except ProfilerResultMismatchError as exc:
+                warnings.warn(
+                    "Filtered profiler rows do not match the expected count for autotune benchmarking; "
+                    f"target_kernel_name={exc.target_kernel_name!r}, expected_rows={exc.expected_rows}, "
+                    f"actual_rows={exc.actual_rows}. fallback to default do_bench.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return {config: self.do_bench(fn, quantiles=(0.5, 0.2, 0.8)) for config, fn in run_fns.items()}
         else:
             return {config: self.do_bench(fn, quantiles=(0.5, 0.2, 0.8)) for config, fn in run_fns.items()}
+
+    def _resolve_target_kernel_name(self, kernels_call, configs) -> Optional[str]:
+        for config in configs:
+            kernel_call = kernels_call.get(config)
+            if kernel_call is None:
+                continue
+            kernel_name = getattr(kernel_call, "target_kernel_name", None)
+            if kernel_name:
+                return kernel_name
+        return None
 
     def _make_kernel_call(self, *args, config, **meta):
         # check for conflicts, i.e. meta-parameters both provided
@@ -2283,8 +2315,9 @@ class AutoTilingTuner(Autotuner):
                     *args,
                     **current,
                 )
-                if warmup:
-                    return res
+                packed_metadata = getattr(res, "packed_metadata", None)
+                if isinstance(packed_metadata, dict):
+                    kernel_call.target_kernel_name = packed_metadata.get("kernel_name")
             except Exception as e:
                 try:
                     self.post_hook(full_nargs, exception=e)
@@ -2292,7 +2325,10 @@ class AutoTilingTuner(Autotuner):
                     # Throw exception raised by `self.fn.run`
                     raise
 
-            self.post_hook(full_nargs, exception=None)
+            if not warmup:
+                self.post_hook(full_nargs, exception=None)
+            return res
+        kernel_call.target_kernel_name = None
         return kernel_call
 
     def warmup(self, *args, **kwargs):

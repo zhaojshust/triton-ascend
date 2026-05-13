@@ -30,6 +30,8 @@
 #include "ascend/include/DynamicCVPipeline/PlanComputeBlock/ReorderOpsByBlockId.h"
 #include "ascend/include/DynamicCVPipeline/PlanComputeBlockPass.h"
 
+#include "ascend/include/DynamicCVPipeline/PlanComputeBlock/PlanCubeBlockPass.h"
+
 using namespace mlir;
 using namespace triton;
 
@@ -48,6 +50,7 @@ void PlanComputeBlockPass::runOnOperation()
     pm.addPass(createOpClassifierPass());
 
     // Step 2: Partition compute blocks for core_type=cube
+    pm.addPass(createPlanCubeBlockPass());
 
     // Step 3: Partition compute blocks for core_type=vector
     pm.addPass(createPlanVectorBlockPass());

@@ -51,6 +51,18 @@ bool isUnsupportedCasOrXchgElementType(Type elementType) {
   return elementType.isF16() || elementType.isBF16();
 }
 
+bool canUseIndirectAtomicFastPathForElementType(Type elementType) {
+  if (auto intType = dyn_cast<IntegerType>(elementType))
+    return intType.getWidth() != 8;
+  return true;
+}
+
+bool canUseIndirectAtomicFastPathForOffset(Value offsetValue) {
+  if (!offsetValue)
+    return true;
+  return hasStaticOffsetShape(offsetValue);
+}
+
 int64_t getNumElements(ArrayRef<int64_t> tensorShape) {
   return std::accumulate(tensorShape.begin(), tensorShape.end(), int64_t{1},
                          std::multiplies<int64_t>());
@@ -190,14 +202,12 @@ bool canUseIndirectAtomicFastPath(triton::AtomicRMWOp op, Value offsetValue) {
   if (!hasStaticShape(resultTensorType))
     return false;
   Type elementType = resultTensorType.getElementType();
-  if (auto intType = dyn_cast<IntegerType>(elementType)) {
-    if (intType.getWidth() == 8)
-      return false;
-  }
+  if (!canUseIndirectAtomicFastPathForElementType(elementType))
+    return false;
   if (op.getAtomicRmwOp() == RMWOp::XCHG &&
       isUnsupportedCasOrXchgElementType(elementType))
     return false;
-  return hasStaticOffsetShape(offsetValue);
+  return canUseIndirectAtomicFastPathForOffset(offsetValue);
 }
 
 bool canUseIndirectAtomicFastPath(triton::AtomicCASOp op, Value offsetValue) {
@@ -205,13 +215,11 @@ bool canUseIndirectAtomicFastPath(triton::AtomicCASOp op, Value offsetValue) {
   if (!hasStaticShape(resultTensorType))
     return false;
   Type elementType = resultTensorType.getElementType();
-  if (auto intType = dyn_cast<IntegerType>(elementType)) {
-    if (intType.getWidth() == 8)
-      return false;
-  }
+  if (!canUseIndirectAtomicFastPathForElementType(elementType))
+    return false;
   if (isUnsupportedCasOrXchgElementType(elementType))
     return false;
-  return hasStaticOffsetShape(offsetValue);
+  return canUseIndirectAtomicFastPathForOffset(offsetValue);
 }
 
 FailureOr<Value> tryConvertAtomicRmwToIndirectCustom(

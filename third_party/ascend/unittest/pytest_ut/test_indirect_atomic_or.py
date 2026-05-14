@@ -45,6 +45,7 @@ import torch
 import torch_npu
 import triton
 import triton.language as tl
+from triton.tools.get_ascend_devices import is_compile_on_910_95
 
 
 SUPPORTED_DTYPES = [
@@ -462,6 +463,8 @@ def _launch_fully_unstructured(rank, offsets, values, output, old, shape):
 @pytest.mark.parametrize("dtype_name, torch_dtype", TEST_DTYPE)
 @pytest.mark.parametrize("rank", TEST_RANKS)
 def test_atomic_or_structured_pointer_with_discrete_mask(dtype_name, torch_dtype, rank):
+    if not is_compile_on_910_95 and torch_dtype in (torch.uint32, torch.uint64):
+        pytest.skip("uint32 and uint64 atomics are only supported on 950")
     shape = RANK_SHAPES[rank]
     values = _build_value_tensor(shape, torch_dtype).npu()
     output_numel = math.prod(shape)
@@ -488,6 +491,8 @@ def test_atomic_or_structured_pointer_with_discrete_mask(dtype_name, torch_dtype
 def test_atomic_or_partially_structured_indirect_offsets(dtype_name, torch_dtype, rank):
     if rank == 1:
         pytest.skip("Partially structured test is not applicable to 1-D tensors")
+    if not is_compile_on_910_95 and torch_dtype in (torch.uint32, torch.uint64):
+        pytest.skip("uint32 and uint64 atomics are only supported on 950")
     shape = PARTIAL_STRUCTURED_SHAPES[rank]
     offsets, output_numel = _build_partial_structured_offsets(shape)
     values = _build_value_tensor(shape, torch_dtype).npu()
@@ -509,6 +514,8 @@ def test_atomic_or_partially_structured_indirect_offsets(dtype_name, torch_dtype
 @pytest.mark.parametrize("dtype_name, torch_dtype", TEST_DTYPE)
 @pytest.mark.parametrize("rank", TEST_RANKS)
 def test_atomic_or_fully_unstructured_indirect_offsets(dtype_name, torch_dtype, rank):
+    if not is_compile_on_910_95 and torch_dtype in (torch.uint32, torch.uint64):
+        pytest.skip("uint32 and uint64 atomics are only supported on 950")
     shape = RANK_SHAPES[rank]
     offsets, output_numel = _build_fully_unstructured_offsets(shape)
     values = _build_value_tensor(shape, torch_dtype).npu()

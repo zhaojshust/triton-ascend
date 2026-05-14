@@ -21,6 +21,7 @@
  */
 
 #include "ascend/include/DiscreteMaskAccessConversion/Passes.h"
+#include "TritonToUnstructure/IndirectAtomicUtils.h"
 #include "Utils/Utils.h"
 
 #include "ascend/include/TritonToLinalg/MaskAnalysis.h"
@@ -294,9 +295,9 @@ struct DiscreteMaskAtomicConversion : OpRewritePattern<mlir::triton::AtomicRMWOp
     if (failed(isDiscreteMask(op, mask, rewriter)))
       return failure();
 
-    op->setAttr(routeDiscreteMaskToSimtAttrName, rewriter.getUnitAttr());
-
-    if (compileOn91095Flag && forceSimtTemplateFlag) {
+    if (compileOn91095Flag && forceSimtTemplateFlag &&
+        IndirectAtomicUtils::canUseIndirectAtomicFastPath(op)) {
+      op->setAttr(routeDiscreteMaskToSimtAttrName, rewriter.getUnitAttr());
       return failure();
     }
 

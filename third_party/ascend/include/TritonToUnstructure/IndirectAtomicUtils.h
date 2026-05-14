@@ -31,12 +31,14 @@ using namespace mlir;
 using namespace triton;
 
 // The fast path requires a statically shaped result tensor whose element type
-// is not int8, and an offset value that is either a statically shaped tensor
-// or a scalar int/index. Additionally, CAS and XCHG do not use the fast path
-// for f16/bf16 results.
-bool canUseIndirectAtomicFastPath(triton::AtomicRMWOp op, Value offsetValue);
+// is not int8. When offsetValue is provided it must be a statically shaped
+// tensor or a scalar int/index. Additionally, CAS and XCHG do not use the
+// fast path for f16/bf16 results.
+bool canUseIndirectAtomicFastPath(triton::AtomicRMWOp op,
+                                  Value offsetValue = Value());
 
-bool canUseIndirectAtomicFastPath(triton::AtomicCASOp op, Value offsetValue);
+bool canUseIndirectAtomicFastPath(triton::AtomicCASOp op,
+                                  Value offsetValue = Value());
 
 // Lowers tt.atomic_rmw to the indirect atomic custom op and restores the
 // flattened custom result back to the original result tensor type.

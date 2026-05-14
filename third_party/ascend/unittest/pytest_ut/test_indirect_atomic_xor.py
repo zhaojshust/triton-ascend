@@ -49,6 +49,8 @@ from triton.tools.get_ascend_devices import is_compile_on_910_95
 
 
 SUPPORTED_DTYPES = [
+    ("int8", torch.int8),
+    ("int16", torch.int16),
     ("int32", torch.int32),
     ("int64", torch.int64),
     ("uint32", torch.uint32),
@@ -70,7 +72,7 @@ PARTIAL_STRUCTURED_SHAPES = {
     5: (2, 2, 2, 2, 8),
 }
 
-TEST_RANKS = [3]
+TEST_RANKS = [3]	 
 TEST_DTYPE = [("int32", torch.int32)]
 
 

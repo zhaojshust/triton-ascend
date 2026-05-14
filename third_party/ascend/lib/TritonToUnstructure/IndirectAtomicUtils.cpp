@@ -29,6 +29,9 @@
 #include <numeric>
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "triton-indirect-atomic-utils"
 
 using namespace mlir;
 using namespace triton;
@@ -37,6 +40,7 @@ namespace {
 
 constexpr llvm::StringLiteral kIndirectAtomicBuiltin = "__builtin_indirect_atomic";
 constexpr unsigned kInt8BitWidth = 8;
+constexpr unsigned kInt16BitWidth = 16;
 
 bool hasStaticShape(RankedTensorType tensorType)
 {
@@ -58,7 +62,8 @@ bool isUnsupportedCasOrXchgElementType(Type elementType)
 bool canUseIndirectAtomicFastPathForElementType(Type elementType)
 {
   if (auto intType = dyn_cast<IntegerType>(elementType))
-    return intType.getWidth() != kInt8BitWidth;
+    return intType.getWidth() != kInt8BitWidth &&
+           intType.getWidth() != kInt16BitWidth;
   return true;
 }
 
@@ -108,6 +113,12 @@ FailureOr<Value> createZeroTensor(Location loc, RankedTensorType tensorType,
   return createSplatConstantTensor(loc, tensorType, *zeroAttr, rewriter);
 }
 
+// Convert i1 mask to i8 before reshape to avoid hardware alignment issues.
+// Directly reshaping 2x3xi1 to 6xi1 without casting leads to incorrect memory layout:
+// Expected: 1 1 1 1 1 1 0 0
+// Actual (due to i8 alignment padding): 1 1 1 0 0 0 0 0, 1 1 1 0 0 0 0 0
+// This layout mismatch breaks mask matching and causes accuracy errors.
+// Casting to i8 first ensures proper element packing without alignment padding.
 Value castMaskToI8(Location loc, Value maskValue, PatternRewriter &rewriter)
 {
   Type maskType = maskValue.getType();
@@ -119,7 +130,8 @@ Value castMaskToI8(Location loc, Value maskValue, PatternRewriter &rewriter)
   return rewriter.create<arith::ExtUIOp>(loc, rewriter.getI8Type(), maskValue);
 }
 
-// Materializes inputValue as a 1D tensor with flatTensorType.
+// Converts inputValue into a 1D tensor of type flatTensorType.
+// This 1D flattening is mandatory: the low-level SIMT execution model only supports 1D tensor.
 // If inputValue is scalar-like, it is first splatted to expandedTensorShape and
 // then reshaped into the flattened 1D tensor type.
 FailureOr<Value> createFlattenedTensorValue(Location loc, Value inputValue,
@@ -223,33 +235,67 @@ bool canUseIndirectAtomicFastPath(triton::AtomicRMWOp op, Value offsetValue)
 {
   auto resultTensorType = dyn_cast<RankedTensorType>(op.getResult().getType());
   if (!hasStaticShape(resultTensorType)) {
+    LLVM_DEBUG({
+      llvm::dbgs() << "Indirect atomic RMW falls back to legacy path: result shape is not static.\n";
+    });
     return false;
   }
   Type elementType = resultTensorType.getElementType();
   if (!canUseIndirectAtomicFastPathForElementType(elementType)) {
+    LLVM_DEBUG({
+      llvm::dbgs() << "Indirect atomic RMW falls back to legacy path: element type "
+                   << elementType << " is not supported by SIMT fast path.\n";
+    });
     return false;
   }
   if (op.getAtomicRmwOp() == RMWOp::XCHG &&
       isUnsupportedCasOrXchgElementType(elementType)) {
+    LLVM_DEBUG({
+      llvm::dbgs() << "Indirect atomic RMW falls back to legacy path: XCHG with element type "
+                   << elementType << " is not supported by SIMT fast path.\n";
+    });
     return false;
   }
-  return canUseIndirectAtomicFastPathForOffset(offsetValue);
+  if (!canUseIndirectAtomicFastPathForOffset(offsetValue)) {
+    LLVM_DEBUG({
+      llvm::dbgs() << "Indirect atomic RMW falls back to legacy path: offset shape is not static.\n";
+    });
+    return false;
+  }
+  return true;
 }
 
 bool canUseIndirectAtomicFastPath(triton::AtomicCASOp op, Value offsetValue)
 {
   auto resultTensorType = dyn_cast<RankedTensorType>(op.getResult().getType());
   if (!hasStaticShape(resultTensorType)) {
+    LLVM_DEBUG({
+      llvm::dbgs() << "Indirect atomic CAS falls back to legacy path: result shape is not static.\n";
+    });
     return false;
   }
   Type elementType = resultTensorType.getElementType();
   if (!canUseIndirectAtomicFastPathForElementType(elementType)) {
+    LLVM_DEBUG({
+      llvm::dbgs() << "Indirect atomic CAS falls back to legacy path: element type "
+                   << elementType << " is not supported by SIMT fast path.\n";
+    });
     return false;
   }
   if (isUnsupportedCasOrXchgElementType(elementType)) {
+    LLVM_DEBUG({
+      llvm::dbgs() << "Indirect atomic CAS falls back to legacy path: element type "
+                   << elementType << " is not supported by SIMT fast path.\n";
+    });
     return false;
   }
-  return canUseIndirectAtomicFastPathForOffset(offsetValue);
+  if (!canUseIndirectAtomicFastPathForOffset(offsetValue)) {
+    LLVM_DEBUG({
+      llvm::dbgs() << "Indirect atomic CAS falls back to legacy path: offset shape is not static.\n";
+    });
+    return false;
+  }
+  return true;
 }
 
 FailureOr<Value> tryConvertAtomicRmwToIndirectCustom(

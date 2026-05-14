@@ -49,6 +49,8 @@ from triton.tools.get_ascend_devices import is_compile_on_910_95
 
 
 SUPPORTED_DTYPES = [
+    ("int8", torch.int8),
+    ("int16", torch.int16),
     ("int32", torch.int32),
     ("int64", torch.int64),
     ("float16", torch.float16),

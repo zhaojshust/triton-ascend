@@ -150,5 +150,12 @@ std::unique_ptr<OperationPass<ModuleOp>> createAddControlFlowConditionPass()
   return std::make_unique<AddControlFlowConditionPass>();
 }
 
+void registerAddControlFlowConditionPasses()
+{
+    registerPass(createCloneOpsPass);
+    registerPass(createCreateIfOpsPass);
+    registerPass(createUpdateForOpsPass);
+    registerPass(createAddControlFlowConditionPass);
+}
 } // namespace triton
 } // namespace mlir

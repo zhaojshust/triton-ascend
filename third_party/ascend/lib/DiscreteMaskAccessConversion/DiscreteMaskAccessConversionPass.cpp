@@ -332,7 +332,6 @@ struct DiscreteMaskAtomicConversion : OpRewritePattern<mlir::triton::AtomicRMWOp
       return failure();
     }
 
-
     auto maskedValue = rewriter.create<arith::SelectOp>(loc, mask, src, *fill);
     auto newAtomicOp = rewriter.create<mlir::triton::AtomicRMWOp>(
         loc, src.getType(), rmwOp, ptr, maskedValue, mlir::Value(), op.getSem(),

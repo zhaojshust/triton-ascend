@@ -51,40 +51,51 @@ bool forceSimtTemplateFlag = false;
 
 namespace {
 
+constexpr int64_t kBitsPerByte = 8;
+
 static constexpr const char *kRouteDiscreteMaskToSimtAttrName =
     "route_discrete_mask_to_simt";
 
-static RankedTensorType resolvePtrTensorType(Value ptr) {
+static RankedTensorType resolvePtrTensorType(Value ptr)
+{
   auto ptrType = dyn_cast<RankedTensorType>(ptr.getType());
   if (auto ptrPtrType = dyn_cast<triton::PointerType>(ptr.getType())) {
     if (auto ptrTensorType =
-            dyn_cast_or_null<RankedTensorType>(ptrPtrType.getPointeeType()))
+            dyn_cast_or_null<RankedTensorType>(ptrPtrType.getPointeeType())) {
       ptrType = ptrTensorType;
+    }
   }
   return ptrType;
 }
 
-static Type getResultElementType(RankedTensorType ptrType) {
+static Type getResultElementType(RankedTensorType ptrType)
+{
   auto resultElementType = ptrType.getElementType();
-  if (auto pointerType = dyn_cast<triton::PointerType>(ptrType.getElementType()))
+  if (auto pointerType = dyn_cast<triton::PointerType>(ptrType.getElementType())) {
     resultElementType = pointerType.getPointeeType();
+  }
   return resultElementType;
 }
 
-static int64_t getTypeSizeInByte(Type type) {
-  if (auto intType = dyn_cast<IntegerType>(type))
-    return intType.getWidth() / 8;
-  if (auto floatType = dyn_cast<FloatType>(type))
-    return floatType.getWidth() / 8;
+static int64_t getTypeSizeInByte(Type type)
+{
+  if (auto intType = dyn_cast<IntegerType>(type)) {
+    return intType.getWidth() / kBitsPerByte;
+  }
+  if (auto floatType = dyn_cast<FloatType>(type)) {
+    return floatType.getWidth() / kBitsPerByte;
+  }
   llvm_unreachable("Unhandled element type of tensor");
 }
 
 template <typename MemAccOpTy>
 void normalizeDiscreteMaskAccessForFallback(MemAccOpTy &op,
                                             PtrOffsetInfo &ptrOffsetInfo,
-                                            PatternRewriter &rewriter) {
-  if (!op->hasAttr(ConverterUtils::discreteMaskAttrName))
+                                            PatternRewriter &rewriter)
+{
+  if (!op->hasAttr(ConverterUtils::discreteMaskAttrName)) {
     return;
+  }
 
   if constexpr (std::is_same_v<MemAccOpTy, triton::StoreOp>) {
     auto selectOp = op.getValue().template getDefiningOp<arith::SelectOp>();
@@ -123,7 +134,7 @@ void normalizeDiscreteMaskAccessForFallback(MemAccOpTy &op,
 //          - SIMT fast-path gate enabled
 //          - offset/value/mask tensors have static shape (required for flatten-to-1D lowering)
 //        Lowering:
-//          tt.atomic_rmw fadd, acq_rel, gpu, %src, %value, %mask 
+//          tt.atomic_rmw fadd, acq_rel, gpu, %src, %value, %mask
 //          -> flatten offsets/data/mask to 1D
 //          -> create a custom op:
 //              hivm.hir.custom {
@@ -139,12 +150,14 @@ template <typename MemAccOpTy>
 LogicalResult tryRewriteIndirectFastPath(MemAccOpTy op, Location loc,
                                          Value srcPtr, Value ptrOffset,
                                          ArrayRef<int64_t> resultShape,
-                                         PatternRewriter &rewriter) {
+                                         PatternRewriter &rewriter)
+{
   bool rankWithinIndirectLoadStoreFastPathLimit = resultShape.size() <= 5;
 
   if constexpr (std::is_same_v<MemAccOpTy, triton::LoadOp>) {
-    if (!rankWithinIndirectLoadStoreFastPathLimit)
+    if (!rankWithinIndirectLoadStoreFastPathLimit) {
       return failure();
+    }
 
     assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
     Value mask = op.getMask();
@@ -169,8 +182,9 @@ LogicalResult tryRewriteIndirectFastPath(MemAccOpTy op, Location loc,
     });
     return success();
   } else if constexpr (std::is_same_v<MemAccOpTy, triton::StoreOp>) {
-    if (!rankWithinIndirectLoadStoreFastPathLimit)
+    if (!rankWithinIndirectLoadStoreFastPathLimit) {
       return failure();
+    }
 
     assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
     Value value = op.getValue();
@@ -192,8 +206,9 @@ LogicalResult tryRewriteIndirectFastPath(MemAccOpTy op, Location loc,
 
     auto customResult = IndirectAtomicUtils::tryConvertAtomicRmwToIndirectCustom(
         op, srcPtr, ptrOffset, rewriter);
-    if (failed(customResult))
+    if (failed(customResult)) {
       return failure();
+    }
 
     rewriter.replaceOp(op, *customResult);
     LLVM_DEBUG({
@@ -209,8 +224,9 @@ LogicalResult tryRewriteIndirectFastPath(MemAccOpTy op, Location loc,
 
     auto customResult = IndirectAtomicUtils::tryConvertAtomicCasToIndirectCustom(
         op, srcPtr, ptrOffset, rewriter);
-    if (failed(customResult))
+    if (failed(customResult)) {
       return failure();
+    }
 
     rewriter.replaceOp(op, *customResult);
     LLVM_DEBUG({

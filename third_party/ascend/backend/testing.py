@@ -111,6 +111,7 @@ def do_bench_npu(
             warmup,
             active,
             target_kernel_name=target_kernel_name,
+            clear_l2_cache=clear_l2_cache,
         )
     finally:
         _rm_dic(keep_res, torch_path)
@@ -131,6 +132,7 @@ def _collect_prof_result(
     num_warmup: int,
     num_active: int,
     target_kernel_name: Optional[str] = None,
+    clear_l2_cache: bool = False,
 ):
     """
     Collect kernel performance from kernel_details.csv, returned in millisecond.
@@ -166,7 +168,7 @@ def _collect_prof_result(
 
     df = pd.read_csv(kernel_details_file)
     # filter out l2 cache clearing operation
-    filter_cond = ~df["Type"].str.contains(r"^ReduceSum$", case=False, na=False)
+    filter_cond = (not clear_l2_cache) | ~df["Type"].str.contains(r"^ReduceSum$", case=False, na=False)
     filter_df = df[filter_cond]
     if target_kernel_name is not None:
         filter_df = filter_df[filter_df["Name"] == target_kernel_name]

@@ -21,6 +21,7 @@
  */
 
 #include "TritonToUnstructure/UnstructureConversionPass.h"
+#include "TritonToUnstructure/IndirectAtomicUtils.h"
 #include "TritonToStructured/CannonicalizerConverter.h"
 #include "TritonToLinalg/MaskAnalysis.h"
 #include "Utils/Utils.h"
@@ -28,6 +29,7 @@
 
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -46,6 +48,196 @@ using namespace triton;
 #include "llvm/Support/Debug.h"
 
 bool forceSimtTemplateFlag = false;
+
+namespace {
+
+constexpr int64_t kBitsPerByte = 8;
+
+static constexpr const char *kRouteDiscreteMaskToSimtAttrName =
+    "route_discrete_mask_to_simt";
+
+static RankedTensorType resolvePtrTensorType(Value ptr)
+{
+  auto ptrType = dyn_cast<RankedTensorType>(ptr.getType());
+  if (auto ptrPtrType = dyn_cast<triton::PointerType>(ptr.getType())) {
+    if (auto ptrTensorType =
+            dyn_cast_or_null<RankedTensorType>(ptrPtrType.getPointeeType())) {
+      ptrType = ptrTensorType;
+    }
+  }
+  return ptrType;
+}
+
+static Type getResultElementType(RankedTensorType ptrType)
+{
+  auto resultElementType = ptrType.getElementType();
+  if (auto pointerType = dyn_cast<triton::PointerType>(ptrType.getElementType())) {
+    resultElementType = pointerType.getPointeeType();
+  }
+  return resultElementType;
+}
+
+static int64_t getTypeSizeInByte(Type type)
+{
+  if (auto intType = dyn_cast<IntegerType>(type)) {
+    return intType.getWidth() / kBitsPerByte;
+  }
+  if (auto floatType = dyn_cast<FloatType>(type)) {
+    return floatType.getWidth() / kBitsPerByte;
+  }
+  llvm_unreachable("Unhandled element type of tensor");
+}
+
+template <typename MemAccOpTy>
+void normalizeDiscreteMaskAccessForFallback(MemAccOpTy &op,
+                                            PtrOffsetInfo &ptrOffsetInfo,
+                                            PatternRewriter &rewriter)
+{
+  if (!op->hasAttr(ConverterUtils::discreteMaskAttrName)) {
+    return;
+  }
+
+  if constexpr (std::is_same_v<MemAccOpTy, triton::StoreOp>) {
+    auto selectOp = op.getValue().template getDefiningOp<arith::SelectOp>();
+    op = rewriter.replaceOpWithNewOp<triton::StoreOp>(
+        op, op.getPtr(), selectOp.getTrueValue(), selectOp.getCondition(),
+        op.getCache(), op.getEvict());
+  } else if constexpr (std::is_same_v<MemAccOpTy, triton::AtomicRMWOp>) {
+    if (auto selectOp = op.getVal().template getDefiningOp<arith::SelectOp>()) {
+      op = rewriter.replaceOpWithNewOp<triton::AtomicRMWOp>(
+          op, op.getType(), op.getAtomicRmwOp(), op.getPtr(),
+          selectOp.getTrueValue(), selectOp.getCondition(), op.getSem(),
+          op.getScope());
+    }
+  }
+
+  rewriter.setInsertionPoint(op);
+  ptrOffsetInfo.setUnstructured(ptrOffsetInfo.getRank());
+}
+
+// ======================== 950 SIMT Indirect Fast-Path Lowering ========================
+// 1. SIMT Fast-Path Gate
+//    The SIMT indirect lowering path is enabled only when:
+//      - compileOn91095Flag && forceSimtTemplateFlag
+//      - and the access is either:
+//          * unstructured, or has tag with 'route_discrete_mask_to_simt'
+//
+// 2. Op-Specific Lowering
+//    (1) tt.load / tt.store
+//        Entry requirements:
+//          - SIMT fast-path gate enabled
+//          - tensor rank <= 5, simt template only supports up to 5D tensors for now
+//        Lowering:
+//          - tt.load / tt.store  -> tt.indirect_load / tt.indirect_store
+//    (2) tt.atomic_rmw / tt.atomic_cas
+//        Entry requirements:
+//          - SIMT fast-path gate enabled
+//          - offset/value/mask tensors have static shape (required for flatten-to-1D lowering)
+//        Lowering:
+//          tt.atomic_rmw fadd, acq_rel, gpu, %src, %value, %mask
+//          -> flatten offsets/data/mask to 1D
+//          -> create a custom op:
+//              hivm.hir.custom {
+//                extra_attr = "operate=<atomic_op>"
+//              } "__builtin_indirect_atomic" ins(%ptr, %offset, %value, %mask) outs(%out)
+//          -> reshape the returned 1D result back to the original tensor shape
+//
+// 3. Fallback Behavior
+//    If SIMT indirect lowering cannot be formed for any operation,
+//    conversion gracefully falls back to the legacy scalar-loop lowering path
+// ======================================================================================
+template <typename MemAccOpTy>
+LogicalResult tryRewriteIndirectFastPath(MemAccOpTy op, Location loc,
+                                         Value srcPtr, Value ptrOffset,
+                                         ArrayRef<int64_t> resultShape,
+                                         PatternRewriter &rewriter)
+{
+  bool rankWithinIndirectLoadStoreFastPathLimit = resultShape.size() <= 5;
+
+  if constexpr (std::is_same_v<MemAccOpTy, triton::LoadOp>) {
+    if (!rankWithinIndirectLoadStoreFastPathLimit) {
+      return failure();
+    }
+
+    assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
+    Value mask = op.getMask();
+    Value other = op.getOther();
+    auto resultType = op.getType();
+    auto newPtr = srcPtr;
+    if (auto *defOp = srcPtr.getDefiningOp()) {
+      if (auto intToPtrOp = dyn_cast<triton::IntToPtrOp>(defOp)) {
+        auto zeroOffset = rewriter.create<arith::ConstantOp>(
+            loc, rewriter.getZeroAttr(intToPtrOp.getSrc().getType()));
+        newPtr = rewriter.create<triton::AddPtrOp>(
+            loc, srcPtr.getType(), srcPtr, zeroOffset);
+      }
+    }
+    auto indirect = rewriter.create<triton::ascend::IndirectLoadOp>(
+        loc, resultType, newPtr, ptrOffset, mask, other);
+    rewriter.replaceOp(op, indirect.getResult());
+    LLVM_DEBUG({
+      auto &os = llvm::dbgs();
+      os << "Rewriting tt.load to tt.indirect_load\n";
+      os << indirect << "\n";
+    });
+    return success();
+  } else if constexpr (std::is_same_v<MemAccOpTy, triton::StoreOp>) {
+    if (!rankWithinIndirectLoadStoreFastPathLimit) {
+      return failure();
+    }
+
+    assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
+    Value value = op.getValue();
+    Value mask = op.getMask();
+    auto indirect = rewriter.create<triton::ascend::IndirectStoreOp>(
+        loc, srcPtr, ptrOffset, value, mask);
+    rewriter.eraseOp(op);
+    LLVM_DEBUG({
+      auto &os = llvm::dbgs();
+      os << "Rewriting tt.store to tt.indirect_store\n";
+      os << indirect << "\n";
+    });
+    return success();
+  } else if constexpr (std::is_same_v<MemAccOpTy, triton::AtomicRMWOp>) {
+    assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
+    if (!IndirectAtomicUtils::canUseIndirectAtomicFastPath(op, ptrOffset)) {
+      return failure();
+    }
+
+    auto customResult = IndirectAtomicUtils::tryConvertAtomicRmwToIndirectCustom(
+        op, srcPtr, ptrOffset, rewriter);
+    if (failed(customResult)) {
+      return failure();
+    }
+
+    rewriter.replaceOp(op, *customResult);
+    LLVM_DEBUG({
+      auto &os = llvm::dbgs();
+      os << "Rewriting tt.atomic_rmw to hivm.hir.custom indirect atomic\n";
+    });
+    return success();
+  } else if constexpr (std::is_same_v<MemAccOpTy, triton::AtomicCASOp>) {
+    assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
+    if (!IndirectAtomicUtils::canUseIndirectAtomicFastPath(op, ptrOffset)) {
+      return failure();
+    }
+
+    auto customResult = IndirectAtomicUtils::tryConvertAtomicCasToIndirectCustom(
+        op, srcPtr, ptrOffset, rewriter);
+    if (failed(customResult)) {
+      return failure();
+    }
+
+    rewriter.replaceOp(op, *customResult);
+    LLVM_DEBUG({
+      auto &os = llvm::dbgs();
+      os << "Rewriting tt.atomic_cas to hivm.hir.custom indirect atomic\n";
+    });
+    return success();
+  }
+}
+
+} // namespace
 
 template <typename MemAccOpTy>
 bool UnstructuredMemAccessConverter<MemAccOpTy>::checkUnstructureAnnotated(
@@ -239,14 +431,8 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
   auto loc = op.getLoc();
 
   auto ptr = op.getPtr();
-  auto ptrType = dyn_cast<RankedTensorType>(ptr.getType());
-  auto isDiscreteMask = op->hasAttr("is_discrete_mask");
-
-  if (auto ptrPtrType = dyn_cast<triton::PointerType>(ptr.getType())) {
-    if (auto ptrTensorType =
-            dyn_cast_or_null<RankedTensorType>(ptrPtrType.getPointeeType()))
-      ptrType = ptrTensorType;
-  }
+  auto ptrType = resolvePtrTensorType(ptr);
+  auto routeDiscreteMaskToSimt = op->hasAttr(kRouteDiscreteMaskToSimtAttrName);
 
   if (!ptrType || op->hasAttr(ConverterUtils::discreteAttrName))
     return failure();
@@ -258,7 +444,7 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
   if (checkUnstructureAnnotated(op, rewriter))
     ptrOffsetInfo.setUnstructured(ptrOffsetInfo.getRank());
 
-  if (ptrOffsetInfo.isStructured() && !isDiscreteMask &&
+  if (ptrOffsetInfo.isStructured() && !routeDiscreteMaskToSimt &&
       (!ptrOffsetInfo.isScalarLike() || llvm::all_of(ptrType.getShape(), [](int64_t dim) { return dim == 1; })))
       return failure();
 
@@ -281,25 +467,7 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
 
   std::optional<MaskState> mstate = runMaskAnalysis(op, rewriter);
 
-  if (op->hasAttr(ConverterUtils::discreteMaskAttrName)) {
-    if constexpr (std::is_same_v<MemAccOpTy, triton::StoreOp>) {
-      auto selectOp = op.getValue().template getDefiningOp<arith::SelectOp>();
-      op = rewriter.replaceOpWithNewOp<triton::StoreOp>(
-          op, op.getPtr(), selectOp.getTrueValue(), selectOp.getCondition(),
-          op.getCache(), op.getEvict());
-      rewriter.setInsertionPoint(op);
-      ptrOffsetInfo.setUnstructured(ptrOffsetInfo.getRank());
-    } else if constexpr (std::is_same_v<MemAccOpTy, triton::AtomicRMWOp>) {
-      if (auto selectOp = op.getVal().template getDefiningOp<arith::SelectOp>()) {
-        op = rewriter.replaceOpWithNewOp<triton::AtomicRMWOp>(
-            op, op.getType(), op.getAtomicRmwOp(), op.getPtr(),
-            selectOp.getTrueValue(), selectOp.getCondition(), op.getSem(),
-            op.getScope());
-      }
-    }
-    rewriter.setInsertionPoint(op);
-    ptrOffsetInfo.setUnstructured(ptrOffsetInfo.getRank());
-  }
+  normalizeDiscreteMaskAccessForFallback(op, ptrOffsetInfo, rewriter);
 
   if (forceScalarizeMode || ptrOffsetInfo.isScalarLike() ||
       fromTensorArg.at(ptr)) {
@@ -317,20 +485,8 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
   Value oneIdx =
       rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(1));
   auto resultShape = ptrType.getShape();
-  auto resultElementType = ptrType.getElementType();
-  if (auto pointerType =
-          dyn_cast<triton::PointerType>(ptrType.getElementType())) {
-    resultElementType = pointerType.getPointeeType();
-  }
-
-  int64_t sizeInByte;
-  if (auto intType = dyn_cast<IntegerType>(resultElementType)) {
-    sizeInByte = intType.getWidth() / 8;
-  } else if (auto floatType = dyn_cast<FloatType>(resultElementType)) {
-    sizeInByte = floatType.getWidth() / 8;
-  } else {
-    llvm_unreachable("Unhandled element type of tensor");
-  }
+  auto resultElementType = getResultElementType(ptrType);
+  int64_t sizeInByte = getTypeSizeInByte(resultElementType);
 
   for (int i = ptrOffsetInfo.getRank() - 1; i >= 0; i--) {
     if (!ptrOffsetInfo.isStructured(i))
@@ -350,56 +506,26 @@ LogicalResult UnstructuredMemAccessConverter<MemAccOpTy>::matchAndRewrite(
     os << "forceSimtTemplateFlag: " << forceSimtTemplateFlag << "\n";
   });
 
-  bool rankWithinIndirectFastPathLimit = resultShape.size() <= 5;
-  // Fast path on A5: rewrite tt.load/store to tt.indirect_load/store directly.
-  if (compileOn91095Flag && forceSimtTemplateFlag &&
-      (ptrOffsetInfo.isUnstructuredOrScalarlike() || isDiscreteMask) &&
-      rankWithinIndirectFastPathLimit) {
-    if constexpr (std::is_same_v<MemAccOpTy, triton::LoadOp>) {
-      assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
-      Value mask = op.getMask();
-      Value other = op.getOther();
-      auto resultType = op.getType();
-      auto newPtr = srcPtr;
-      if (auto *defOp = srcPtr.getDefiningOp()) {
-          if (auto intToPtrOp = dyn_cast<triton::IntToPtrOp>(defOp)) {
-              auto zeroOffset =
-                  rewriter.create<arith::ConstantOp>(loc, rewriter.getZeroAttr(intToPtrOp.getSrc().getType()));
-              newPtr = rewriter.create<triton::AddPtrOp>(loc, srcPtr.getType(), srcPtr, zeroOffset);
-          }
-      }
-      auto indirect = rewriter.create<triton::ascend::IndirectLoadOp>(
-          loc, resultType, newPtr, ptrOffset, mask, other);
-      rewriter.replaceOp(op, indirect.getResult());
-      LLVM_DEBUG({
-        auto &os = llvm::dbgs();
-        os << "Rewriting tt.load to tt.indirect_load\n";
-        os << indirect << "\n";
-      });
-      return success();
-    } else if constexpr (std::is_same_v<MemAccOpTy, triton::StoreOp>) {
-      assert(isa<triton::PointerType>(srcPtr.getType()) && "src must be ptr type");
-      Value value = op.getValue();
-      Value mask = op.getMask();
-      auto indirect = rewriter.create<triton::ascend::IndirectStoreOp>(
-          loc, srcPtr, ptrOffset, value, mask);
-      rewriter.eraseOp(op);
-      LLVM_DEBUG({
-        auto &os = llvm::dbgs();
-        os << "Rewriting tt.store to tt.indirect_store\n";
-        os << indirect << "\n";
-      });
-      return success();
-    }
+  // SIMT Indirect Fast-Path Lowering in 950 seiries
+  bool indirectFastPathEnabled =
+      compileOn91095Flag && forceSimtTemplateFlag &&
+      (!ptrOffsetInfo.isStructured() || routeDiscreteMaskToSimt);
+  bool rankWithinIndirectLoadStoreFastPathLimit = resultShape.size() <= 5;
+  if (indirectFastPathEnabled &&
+      succeeded(tryRewriteIndirectFastPath(op, loc, srcPtr, ptrOffset,
+                                           resultShape, rewriter))) {
+    return success();
   }
 
   LLVM_DEBUG({
-    if (compileOn91095Flag && forceSimtTemplateFlag &&
-        (ptrOffsetInfo.isUnstructuredOrScalarlike() || isDiscreteMask) &&
-        !rankWithinIndirectFastPathLimit) {
-      auto &os = llvm::dbgs();
-      os << "Skip tt.indirect_load/store fast path because rank is "
-         << resultShape.size() << " (>5)\n";
+    if constexpr (std::is_same_v<MemAccOpTy, triton::LoadOp> ||
+                  std::is_same_v<MemAccOpTy, triton::StoreOp>) {
+      if (indirectFastPathEnabled &&
+          !rankWithinIndirectLoadStoreFastPathLimit) {
+        auto &os = llvm::dbgs();
+        os << "Skip tt.indirect_load/store fast path because rank is "
+           << resultShape.size() << " (>5), falling back to scalar loop path\n";
+      }
     }
   });
 
@@ -750,7 +876,8 @@ void TritonToUnstructurePass::getDependentDialects(
   registry.insert<func::FuncDialect, arith::ArithDialect, linalg::LinalgDialect,
                   affine::AffineDialect, scf::SCFDialect, tensor::TensorDialect,
                   bufferization::BufferizationDialect, memref::MemRefDialect,
-                  triton::TritonDialect, triton::ascend::TritonAscendDialect>();
+                  triton::TritonDialect, triton::ascend::TritonAscendDialect,
+                  hivm::HIVMDialect>();
 }
 
 std::unique_ptr<OperationPass<ModuleOp>> triton::createTritonToUnstructurePass(

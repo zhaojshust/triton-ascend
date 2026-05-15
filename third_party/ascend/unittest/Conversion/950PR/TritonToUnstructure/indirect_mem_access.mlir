@@ -14,7 +14,7 @@ tt.func @triton_indirect_load(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>) {
   %5 = tt.addptr %4, %0 : tensor<1024x!tt.ptr<i32>>, tensor<1024xi32>
   %6 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<1024x!tt.ptr<i32>>
   %7 = tt.addptr %6, %0 : tensor<1024x!tt.ptr<i32>>, tensor<1024xi32>
-  %8 = tt.load %5, %3, %cst {is_discrete_mask} : tensor<1024x!tt.ptr<i32>>
+  %8 = tt.load %5, %3, %cst {route_discrete_mask_to_simt} : tensor<1024x!tt.ptr<i32>>
   tt.store %7, %8 : tensor<1024x!tt.ptr<i32>>
   tt.return
 }
@@ -33,6 +33,6 @@ tt.func @triton_indirect_store(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>) {
   %6 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<1024x!tt.ptr<i32>>
   %7 = tt.addptr %6, %0 : tensor<1024x!tt.ptr<i32>>, tensor<1024xi32>
   %8 = tt.load %5 : tensor<1024x!tt.ptr<i32>>
-  tt.store %7, %8, %3 {is_discrete_mask} : tensor<1024x!tt.ptr<i32>>
+  tt.store %7, %8, %3 {route_discrete_mask_to_simt} : tensor<1024x!tt.ptr<i32>>
   tt.return
 }
